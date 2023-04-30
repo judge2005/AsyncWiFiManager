@@ -1,0 +1,38 @@
+#######################################
+# Syntax Coloring Map For AsyncWiFiManager
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+AsyncWiFiManager	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+loop KEYWORD2
+start KEYWORD2
+setDebugOutput KEYWORD2
+setRemoveDuplicateAPs KEYWORD2
+setCustomOptionsHTML KEYWORD2
+setCustomHeadHTML KEYWORD2
+addParameter KEYWORD2
+setMinimumSignalQuality KEYWORD2
+setAPStaticIPConfig KEYWORD2
+setSTAStaticIPConfig KEYWORD2
+setSaveConfigCallback KEYWORD2
+setConnectedCallback KEYWORD2
+setConnectTimeout KEYWORD2
+setAPCallback KEYWORD2
+setRouterCredentials KEYWORD2
+setAPCredentials KEYWORD2
+stopConfigPortal KEYWORD2
+startConfigPortal KEYWORD2
+isAP KEYWORD2
+
+#######################################
+# Constants (LITERAL1)
+#######################################
+
+#	LITERAL1
