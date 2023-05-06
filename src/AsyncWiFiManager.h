@@ -105,6 +105,7 @@ public:
 #else
 	AsyncWiFiManager(AsyncWebServer * server, DNSServer *dns);
 #endif
+	~AsyncWiFiManager() {}
 
 	void loop();
 	bool start();

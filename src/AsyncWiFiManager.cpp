@@ -246,6 +246,9 @@ void AsyncWiFiManager::setConnectTimeout(unsigned long timeout) {
 bool AsyncWiFiManager::start() {
 	DEBUG_WM(F(""));
 
+	WiFi.setAutoReconnect(true);
+	WiFi.setAutoConnect(false);
+	WiFi.persistent(true);
 #ifdef ESP8266
 	stationConnectedHandler = WiFi.onStationModeConnected(std::bind(&AsyncWiFiManager::onConnected, this, std::placeholders::_1));
 	stationDisconnectedHandler = WiFi.onStationModeDisconnected(std::bind(&AsyncWiFiManager::onDisconnected, this, std::placeholders::_1));
@@ -254,14 +257,12 @@ bool AsyncWiFiManager::start() {
 	stationDisconnectedHandler = WiFi.onEvent(std::bind(&AsyncWiFiManager::onDisconnected, this, std::placeholders::_1, std::placeholders::_2), ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
 #endif
 
-	WiFi.setAutoReconnect(false);
-	WiFi.setAutoConnect(false);
-	WiFi.persistent(true);
 	WiFi.mode(WIFI_STA);
 	_isAP = false;
 
 	connect = true;
 	bool started = _start();
+	WiFi.setAutoReconnect(false);	// Otherwise connecting to our AP is almost impossible
 	connect = false;
 
 	return started;
@@ -285,13 +286,13 @@ bool AsyncWiFiManager::_start() {
 		delay(10);
 	}
 
-
 	if (WiFi.isConnected()) {
 		DEBUG_WM(F("returning"));
 		return true;
 	}
 
 	DEBUG_WM(WiFi.status());
+	DEBUG_WM(WiFi.psk());
 	DEBUG_WM(WiFi.SSID());
 #ifdef ESP8266
 	// If we don't do this, the persisted credentials get cleared
