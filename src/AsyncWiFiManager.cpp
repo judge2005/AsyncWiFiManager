@@ -253,8 +253,13 @@ bool AsyncWiFiManager::start() {
 	stationConnectedHandler = WiFi.onStationModeConnected(std::bind(&AsyncWiFiManager::onConnected, this, std::placeholders::_1));
 	stationDisconnectedHandler = WiFi.onStationModeDisconnected(std::bind(&AsyncWiFiManager::onDisconnected, this, std::placeholders::_1));
 #else
+#if ESP_ARDUINO_VERSION_MAJOR >= 2
 	stationConnectedHandler = WiFi.onEvent(std::bind(&AsyncWiFiManager::onConnected, this, std::placeholders::_1, std::placeholders::_2), ARDUINO_EVENT_WIFI_STA_CONNECTED);
 	stationDisconnectedHandler = WiFi.onEvent(std::bind(&AsyncWiFiManager::onDisconnected, this, std::placeholders::_1, std::placeholders::_2), ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+#else
+	stationConnectedHandler = WiFi.onEvent(std::bind(&AsyncWiFiManager::onConnected, this, std::placeholders::_1, std::placeholders::_2), SYSTEM_EVENT_STA_CONNECTED);
+	stationDisconnectedHandler = WiFi.onEvent(std::bind(&AsyncWiFiManager::onDisconnected, this, std::placeholders::_1, std::placeholders::_2), SYSTEM_EVENT_STA_DISCONNECTED);
+#endif
 #endif
 
 	WiFi.mode(WIFI_STA);
@@ -1092,7 +1097,11 @@ void AsyncWiFiManager::setConnectedCallback(void (*func)(void)) {
 #ifdef ESP8266
 	stationGotIPHandler = WiFi.onStationModeGotIP(std::bind(&AsyncWiFiManager::onStationIP, this, std::placeholders::_1));
 #else
+#if ESP_ARDUINO_VERSION_MAJOR >= 2
 	stationGotIPHandler = WiFi.onEvent(std::bind(&AsyncWiFiManager::onStationIP, this, std::placeholders::_1, std::placeholders::_2), ARDUINO_EVENT_WIFI_STA_GOT_IP);
+#else
+	stationGotIPHandler = WiFi.onEvent(std::bind(&AsyncWiFiManager::onStationIP, this, std::placeholders::_1, std::placeholders::_2), SYSTEM_EVENT_STA_GOT_IP);
+#endif
 #endif
 }
 
