@@ -110,6 +110,7 @@ public:
 	void loop();
 	bool start();
 
+	void setHostname(const char* hostname);
 	void setDebugOutput(bool debug);
 	void setRemoveDuplicateAPs(bool flag);
 	void setCustomOptionsHTML(const char* html);

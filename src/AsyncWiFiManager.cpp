@@ -14,6 +14,8 @@
 #include "AsyncWiFiManager.h"
 #if !defined(ESP8266)
 #include <esp_wifi.h>
+#else
+#include <core_version.h>
 #endif
 
 AsyncWiFiManagerParameter::AsyncWiFiManagerParameter(const char *custom) {
@@ -98,6 +100,14 @@ void AsyncWiFiManager::_cacheHeads() {
 	_resetHead = FPSTR(WFM_HTTP_HEAD);
 	_resetHead.replace("{v}", "Reset");
 
+}
+
+void AsyncWiFiManager::setHostname(const char* hostname) {
+#ifdef ARDUINO_ESP8266_RELEASE_2_3_0
+	WiFi.hostname(hostname);
+#else
+	WiFi.setHostname(hostname);
+#endif
 }
 
 void AsyncWiFiManager::addParameter(AsyncWiFiManagerParameter *p) {
