@@ -109,6 +109,7 @@ public:
 
 	void loop();
 	bool start();
+	void connect();
 
 	void setHostname(const char* hostname);
 	void setDebugOutput(bool debug);
@@ -136,6 +137,8 @@ public:
 	void startConfigPortal(const char* ssid, const char* pass);
 	bool isAP();
 
+	void dumpInfo();
+
 private:
 	bool _debug = false;
 
@@ -160,8 +163,9 @@ private:
     unsigned long _connectRetryTimeout = 0;
     unsigned long _apOffTimeout = 0;
     unsigned long _lastConnectTime = 0;
+    unsigned long _lastLoopTime = 0;
 
-    bool connect = false;			// Config Portal requested connection
+    bool _connect = false;			// Config Portal requested connection
 	bool _isAP = false;				// True if AP is enabled
 	int _loop_ap_state = -1;
 	bool _loop_scan = false;

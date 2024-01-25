@@ -159,7 +159,15 @@ wl_status_t AsyncWiFiManager::_connectWiFi() {
 			status = WiFi.begin(_router_ssid.c_str());
 		}
 	} else {
-		DEBUG_WM("Connecting with saved credentials");
+		DEBUG_WM("Connecting with saved credentials:");
+		DEBUG_WM(WiFi.psk());
+#ifdef ESP32
+	    wifi_config_t conf;
+	    esp_wifi_get_config((wifi_interface_t)ESP_IF_WIFI_STA, &conf);
+	    DEBUG_WM(String(reinterpret_cast<char*>(conf.sta.ssid)));
+#else
+		DEBUG_WM(WiFi.SSID());
+#endif
 		status = WiFi.begin();
 	}
 
@@ -253,6 +261,10 @@ void AsyncWiFiManager::setConnectTimeout(unsigned long timeout) {
 	_connectTimeout = timeout;
 }
 
+void AsyncWiFiManager::connect() {
+	_connect = true;
+}
+
 bool AsyncWiFiManager::start() {
 	DEBUG_WM(F(""));
 
@@ -275,10 +287,10 @@ bool AsyncWiFiManager::start() {
 	WiFi.mode(WIFI_STA);
 	_isAP = false;
 
-	connect = true;
+	_connect = true;
 	bool started = _start();
 	WiFi.setAutoReconnect(false);	// Otherwise connecting to our AP is almost impossible
-	connect = false;
+	_connect = false;
 
 	return started;
 }
@@ -291,7 +303,7 @@ bool AsyncWiFiManager::_start() {
 	}
 
 	// attempt to connect; should it fail, fall back to AP
-	if (connect) {
+	if (_connect) {
 		_connectWiFi();
 	}
 
@@ -308,8 +320,13 @@ bool AsyncWiFiManager::_start() {
 
 	DEBUG_WM(WiFi.status());
 	DEBUG_WM(WiFi.psk());
-	DEBUG_WM(WiFi.SSID());
+#ifdef ESP32
+    wifi_config_t conf;
+    esp_wifi_get_config((wifi_interface_t)ESP_IF_WIFI_STA, &conf);
+    DEBUG_WM(String(reinterpret_cast<char*>(conf.sta.ssid)));
+#endif
 #ifdef ESP8266
+	DEBUG_WM(WiFi.SSID());
 	// If we don't do this, the persisted credentials get cleared
 	_router_ssid = WiFi.SSID();
 	_router_pass = WiFi.psk();
@@ -342,21 +359,29 @@ void AsyncWiFiManager::_release() {
 #endif
 }
 
+void AsyncWiFiManager::dumpInfo() {
+	Serial.printf("WM lastConnectTime=%lu, lastLoopTime=%lu, WiFi status=%d\n", _lastConnectTime, _lastLoopTime, WiFi.status());
+}
+
 void AsyncWiFiManager::loop() {
+	unsigned long now = millis();
+
+	_lastLoopTime = now;
+
 #ifndef USE_EADNS
 	if (isAP()) {
 		dnsServer->processNextRequest();
 	}
 #endif
 
-	if (connect) {
+	if (_connect) {
 		DEBUG_WM(F("Connecting to new AP"));
 		unsigned long savedTimeout = _connectTimeout;
 #ifdef ESP32
 		WiFi.disconnect();
 #endif
 		_start();
-		connect = false;
+		_connect = false;
 		if ( _savecallback != NULL) {
 		  //todo: check if any custom parameters actually exist, and check if they really changed maybe
 		  _savecallback();
@@ -366,8 +391,8 @@ void AsyncWiFiManager::loop() {
 	_claim();
 	if (_connectRetryTimeout > 0 || _loop_ap_state >= 0 || _loop_scan || _loop_call_connected) {
 		if (_connectRetryTimeout > 0) {
-			unsigned long now = millis();
 			if (now - _lastConnectTime > _connectRetryTimeout) {
+				DEBUG_WM(_connectRetryTimeout);
 				_lastConnectTime = now;
 				_release();
 #ifdef ESP32
@@ -866,7 +891,7 @@ void AsyncWiFiManager::handleWifiSave(AsyncWebServerRequest *request) {
 
 	DEBUG_WM(F("Sent wifi save page"));
 
-	connect = true; //signal ready to connect/reset
+	_connect = true; //signal ready to connect/reset
 }
 
 /** Handle the info page */
@@ -933,12 +958,12 @@ void AsyncWiFiManager::handleInfo(AsyncWebServerRequest *request) {
 	response->print(FPSTR(HTTP_SCRIPT));
 	response->print(FPSTR(HTTP_STYLE));
 	response->print(_customHeadHTML);
-	if (connect == true) {
+	if (_connect == true) {
 		response->print(F("<meta http-equiv=\"refresh\" content=\"5; url=/i\">"));
 	}
 	response->print(FPSTR(HTTP_HEAD_END));
 	response->print(F("<dl>"));
-	if (connect == true) {
+	if (_connect == true) {
 		response->print(F("<dt>Trying to connect</dt><dd>"));
 		response->print(WiFi.status());
 		response->print(F("</dd>"));
@@ -992,7 +1017,7 @@ void AsyncWiFiManager::handleReset(AsyncWebServerRequest *request) {
 void AsyncWiFiManager::handleNotFound(AsyncWebServerRequest *request) {
 	DEBUG_WM(F("Handle not found"));
 
-	if (connect) {
+	if (_connect) {
 //	  DEBUG_WM(F("Connecting, returning"));
 		return;
 	}
