@@ -176,6 +176,15 @@ private:
 	String _ap_pass;
 
 	bool   _portalSet = false;		// Enforce single initialization of ConfigPortal
+
+	AsyncWebHandler* rootApHandler;
+	AsyncWebHandler* wifiApHandler;
+	AsyncWebHandler* wifi0ApHandler;
+	AsyncWebHandler* wifiSaveApHandler;
+	AsyncWebHandler* iApHandler;
+	AsyncWebHandler* rApHandler;
+	AsyncWebHandler* fwLinkApHandler;
+	
 	bool   _refresh_info = true;	// Refresh the info HTML when true
 	String _customHeadHTML;
 	String _customOptionsHTML;

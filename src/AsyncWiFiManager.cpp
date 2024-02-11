@@ -121,6 +121,7 @@ void AsyncWiFiManager::dnsStart(bool start) {
 	//Make DNS control idempotent
 
 	if (start && !_dnsRunning) {
+		DEBUG_WM(F("Starting DNS server"));
 		_dnsRunning = true;
 		/* Setup the DNS server redirecting all the domains to the apIP */
 #ifdef USE_EADNS
@@ -137,6 +138,7 @@ void AsyncWiFiManager::dnsStart(bool start) {
 	}
 
 	if (!start && _dnsRunning) {
+		DEBUG_WM(F("Stopping DNS server"));
 		_dnsRunning = false;
 		dnsServer->stop();
 	}
@@ -207,14 +209,14 @@ void AsyncWiFiManager::_setupConfigPortal() {
 	if (!_portalSet) {
 		_portalSet = true;
 		/* Setup web pages: root, wifi config pages, SO captive portal detectors and not found. */
-		server->on("/", std::bind(&AsyncWiFiManager::handleRoot, this,std::placeholders::_1)).setFilter(ON_AP_FILTER);
-		server->on("/wifi", std::bind(&AsyncWiFiManager::handleWifi, this, std::placeholders::_1,true)).setFilter(ON_AP_FILTER);
-		server->on("/0wifi", std::bind(&AsyncWiFiManager::handleWifi, this,std::placeholders::_1, false)).setFilter(ON_AP_FILTER);
-		server->on("/wifisave", std::bind(&AsyncWiFiManager::handleWifiSave,this,std::placeholders::_1)).setFilter(ON_AP_FILTER);
-		server->on("/i", std::bind(&AsyncWiFiManager::handleInfo,this, std::placeholders::_1)).setFilter(ON_AP_FILTER);
-		server->on("/r", std::bind(&AsyncWiFiManager::handleReset, this,std::placeholders::_1)).setFilter(ON_AP_FILTER);
+		rootApHandler = &server->on("/", std::bind(&AsyncWiFiManager::handleRoot, this,std::placeholders::_1)).setFilter(ON_AP_FILTER);
+		wifiApHandler = &server->on("/wifi", std::bind(&AsyncWiFiManager::handleWifi, this, std::placeholders::_1,true)).setFilter(ON_AP_FILTER);
+		wifi0ApHandler = &server->on("/0wifi", std::bind(&AsyncWiFiManager::handleWifi, this,std::placeholders::_1, false)).setFilter(ON_AP_FILTER);
+		wifiSaveApHandler = &server->on("/wifisave", std::bind(&AsyncWiFiManager::handleWifiSave,this,std::placeholders::_1)).setFilter(ON_AP_FILTER);
+		iApHandler = &server->on("/i", std::bind(&AsyncWiFiManager::handleInfo,this, std::placeholders::_1)).setFilter(ON_AP_FILTER);
+		rApHandler = &server->on("/r", std::bind(&AsyncWiFiManager::handleReset, this,std::placeholders::_1)).setFilter(ON_AP_FILTER);
 		//server->on("/generate_204", std::bind(&AsyncWiFiManager::handle204, this));  //Android/Chrome OS captive portal check.
-		server->on("/fwlink", std::bind(&AsyncWiFiManager::handleRoot, this,std::placeholders::_1)).setFilter(ON_AP_FILTER);  //Microsoft captive portal. Maybe not needed. Might be handled by notFound handler.
+		fwLinkApHandler = &server->on("/fwlink", std::bind(&AsyncWiFiManager::handleRoot, this,std::placeholders::_1)).setFilter(ON_AP_FILTER);  //Microsoft captive portal. Maybe not needed. Might be handled by notFound handler.
 		server->onNotFound (std::bind(&AsyncWiFiManager::handleNotFound,this,std::placeholders::_1));
 		server->begin(); // Web server start
 	}
@@ -612,6 +614,24 @@ void AsyncWiFiManager::_stopConfigPortal() {
 		if (_apcallback != NULL) {
 			_apcallback(this);
 		}
+	}
+
+	if (wifiSSIDs != NULL) {
+		delete[] wifiSSIDs;
+		wifiSSIDs == NULL;
+	}
+
+	wifiSSIDCount = 0;
+
+	if (_portalSet){
+		_portalSet = false;
+		server->removeHandler(rootApHandler);
+		server->removeHandler(wifiApHandler);
+		server->removeHandler(wifi0ApHandler);
+		server->removeHandler(wifiSaveApHandler);
+		server->removeHandler(iApHandler);
+		server->removeHandler(rApHandler);
+		server->removeHandler(fwLinkApHandler);
 	}
 }
 
