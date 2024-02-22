@@ -605,17 +605,6 @@ bool AsyncWiFiManager::_startConfigPortal() {
 }
 
 void AsyncWiFiManager::_stopConfigPortal() {
-	if (_isAP) {
-		DEBUG_WM(F("Disable AP"));
-		WiFi.enableAP(false);
-		_isAP = false;
-		dnsStart(false);
-		//notify AP mode state
-		if (_apcallback != NULL) {
-			_apcallback(this);
-		}
-	}
-
 	if (wifiSSIDs != NULL) {
 		delete[] wifiSSIDs;
 		wifiSSIDs == NULL;
@@ -632,6 +621,17 @@ void AsyncWiFiManager::_stopConfigPortal() {
 		server->removeHandler(iApHandler);
 		server->removeHandler(rApHandler);
 		server->removeHandler(fwLinkApHandler);
+	}
+	
+	if (_isAP) {
+		DEBUG_WM(F("Disable AP"));
+		WiFi.enableAP(false);
+		_isAP = false;
+		dnsStart(false);
+		//notify AP mode state
+		if (_apcallback != NULL) {
+			_apcallback(this);
+		}
 	}
 }
 
