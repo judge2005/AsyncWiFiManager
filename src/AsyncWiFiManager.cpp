@@ -271,7 +271,9 @@ bool AsyncWiFiManager::start() {
 	DEBUG_WM(F(""));
 
 	WiFi.setAutoReconnect(true);
+#if ESP_ARDUINO_VERSION_MAJOR < 3
 	WiFi.setAutoConnect(false);
+#endif
 	WiFi.persistent(true);
 #ifdef ESP8266
 	stationConnectedHandler = WiFi.onStationModeConnected(std::bind(&AsyncWiFiManager::onConnected, this, std::placeholders::_1));
