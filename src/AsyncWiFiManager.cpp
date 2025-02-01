@@ -1077,11 +1077,14 @@ void AsyncWiFiManager::handleNotFound(AsyncWebServerRequest *request) {
 /** Redirect to captive portal if we got a request for another domain. Return true in that case so the page handler do not try to handle the request again. */
 bool AsyncWiFiManager::captivePortal(AsyncWebServerRequest *request) {
 	if (!isIp(request->host())) {
-	DEBUG_WM(request->url());
-	DEBUG_WM(F("Request redirected to captive portal, AP IP="));
-	DEBUG_WM(WiFi.softAPIP());
-	DEBUG_WM(F("Client IP="));
-	DEBUG_WM(request->client()->localIP());
+		DEBUG_WM(request->url());
+		DEBUG_WM(F("Request redirected to captive portal, AP IP="));
+		DEBUG_WM(WiFi.softAPIP());
+		DEBUG_WM(F("Client IP="));
+		DEBUG_WM(request->client()->localIP());
+
+		delay(2);	// ESP32Async version of AsyncWebServer needs this? Or may ESP32 S2...
+
 		AsyncWebServerResponse *response = request->beginResponse(302,
 				"text/html", "");
 		response->addHeader("Location",
