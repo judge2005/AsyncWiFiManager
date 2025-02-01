@@ -1078,8 +1078,11 @@ void AsyncWiFiManager::handleNotFound(AsyncWebServerRequest *request) {
 bool AsyncWiFiManager::captivePortal(AsyncWebServerRequest *request) {
 	if (!isIp(request->host())) {
 		DEBUG_WM(request->url());
+#ifdef notdef
+		// These lines mess up the ESP32 S2?
 		DEBUG_WM(F("Request redirected to captive portal, AP IP="));
 		DEBUG_WM(WiFi.softAPIP());
+#endif
 		DEBUG_WM(F("Client IP="));
 		DEBUG_WM(request->client()->localIP());
 
