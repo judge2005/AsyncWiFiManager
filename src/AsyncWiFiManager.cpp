@@ -210,8 +210,7 @@ void AsyncWiFiManager::_setupConfigPortal() {
 		_portalSet = true;
 		/* Setup web pages: root, wifi config pages, SO captive portal detectors and not found. */
 		rootApHandler = &server->on("/", std::bind(&AsyncWiFiManager::handleRoot, this,std::placeholders::_1)).setFilter(ON_AP_FILTER);
-		wifiApHandler = &server->on("/wifi", std::bind(&AsyncWiFiManager::handleWifi, this, std::placeholders::_1,true)).setFilter(ON_AP_FILTER);
-		wifi0ApHandler = &server->on("/0wifi", std::bind(&AsyncWiFiManager::handleWifi, this,std::placeholders::_1, false)).setFilter(ON_AP_FILTER);
+		wifiApHandler = &server->on("/wifi", HTTP_GET, std::bind(&AsyncWiFiManager::handleWifi, this, std::placeholders::_1)).setFilter(ON_AP_FILTER);
 		wifiSaveApHandler = &server->on("/wifisave", std::bind(&AsyncWiFiManager::handleWifiSave,this,std::placeholders::_1)).setFilter(ON_AP_FILTER);
 		iApHandler = &server->on("/i", std::bind(&AsyncWiFiManager::handleInfo,this, std::placeholders::_1)).setFilter(ON_AP_FILTER);
 		rApHandler = &server->on("/r", std::bind(&AsyncWiFiManager::handleReset, this,std::placeholders::_1)).setFilter(ON_AP_FILTER);
@@ -271,9 +270,7 @@ bool AsyncWiFiManager::start() {
 	DEBUG_WM(F(""));
 
 	WiFi.setAutoReconnect(true);
-#if ESP_ARDUINO_VERSION_MAJOR < 3
 	WiFi.setAutoConnect(false);
-#endif
 	WiFi.persistent(true);
 #ifdef ESP8266
 	stationConnectedHandler = WiFi.onStationModeConnected(std::bind(&AsyncWiFiManager::onConnected, this, std::placeholders::_1));
@@ -607,6 +604,17 @@ bool AsyncWiFiManager::_startConfigPortal() {
 }
 
 void AsyncWiFiManager::_stopConfigPortal() {
+	if (_isAP) {
+		DEBUG_WM(F("Disable AP"));
+		WiFi.enableAP(false);
+		_isAP = false;
+		dnsStart(false);
+		//notify AP mode state
+		if (_apcallback != NULL) {
+			_apcallback(this);
+		}
+	}
+
 	if (wifiSSIDs != NULL) {
 		delete[] wifiSSIDs;
 		wifiSSIDs == NULL;
@@ -618,22 +626,10 @@ void AsyncWiFiManager::_stopConfigPortal() {
 		_portalSet = false;
 		server->removeHandler(rootApHandler);
 		server->removeHandler(wifiApHandler);
-		server->removeHandler(wifi0ApHandler);
 		server->removeHandler(wifiSaveApHandler);
 		server->removeHandler(iApHandler);
 		server->removeHandler(rApHandler);
 		server->removeHandler(fwLinkApHandler);
-	}
-	
-	if (_isAP) {
-		DEBUG_WM(F("Disable AP"));
-		WiFi.enableAP(false);
-		_isAP = false;
-		dnsStart(false);
-		//notify AP mode state
-		if (_apcallback != NULL) {
-			_apcallback(this);
-		}
 	}
 }
 
@@ -702,16 +698,15 @@ void AsyncWiFiManager::handleRoot(AsyncWebServerRequest *request) {
 }
 
 /** Wifi config page handler */
-void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request, bool showNetworks) {
+static String oneString("1");
+
+void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 	DEBUG_WM(F("Handle wifi"));
 
+	String useStatic = request->arg("static");
+	_loop_scan = request->hasParam("scan");
+	
 	AsyncResponseStream *response = request->beginResponseStream("text/html");
-
-	String doScan = request->arg(F("scan"));
-	_claim();
-	if (doScan.length() > 0) {
-		_loop_scan = true;
-	}
 
 	if (_loop_scan) {
 		_release();
@@ -719,7 +714,9 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request, bool showNetwo
 		response->print(_wifiHead);
 		response->print(FPSTR(HTTP_STYLE));
 		response->print(_customHeadHTML);
-		response->print(F("<meta http-equiv=\"refresh\" content=\"5; url=/wifi\">"));
+		String refresh = String(HTTP_SCAN_REFRESH);
+		refresh.replace("{s}", useStatic);
+		response->print(refresh);
 		response->print(FPSTR(HTTP_HEAD_END));
 		response->print(F("Scanning..."));
 		response->print(FPSTR(HTTP_END));
@@ -737,11 +734,8 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request, bool showNetwo
 	response->print(FPSTR(HTTP_HEAD_END));
 
 	//display networks in page
-	if (showNetworks) {
-		sendNetworkList(response);
-
-		response->print("<br/>");
-	}
+	sendNetworkList(response);
+	response->print("<br/>");
 
 	response->print(FPSTR(HTTP_FORM_START));
 	char parLength[2];
@@ -770,7 +764,7 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request, bool showNetwo
 		response->print("<br/>");
 	}
 
-	if (_sta_static_ip) {
+	if (useStatic == oneString) {
 
 		String item = FPSTR(HTTP_FORM_PARAM);
 		item.replace("{i}", "ip");
@@ -822,9 +816,9 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request, bool showNetwo
 
 	response->print(FPSTR(HTTP_FORM_END));
 
-	if (showNetworks) {
-		response->print(FPSTR(HTTP_SCAN_LINK));
-	}
+	String scanLink = String(FPSTR(HTTP_SCAN_LINK));
+	scanLink.replace("{s}", useStatic);
+	response->print(scanLink);
 
 	response->print(FPSTR(HTTP_END));
 
@@ -1077,17 +1071,11 @@ void AsyncWiFiManager::handleNotFound(AsyncWebServerRequest *request) {
 /** Redirect to captive portal if we got a request for another domain. Return true in that case so the page handler do not try to handle the request again. */
 bool AsyncWiFiManager::captivePortal(AsyncWebServerRequest *request) {
 	if (!isIp(request->host())) {
-		DEBUG_WM(request->url());
-#ifdef notdef
-		// These lines mess up the ESP32 S2?
-		DEBUG_WM(F("Request redirected to captive portal, AP IP="));
-		DEBUG_WM(WiFi.softAPIP());
-#endif
-		DEBUG_WM(F("Client IP="));
-		DEBUG_WM(request->client()->localIP());
-
-		delay(2);	// ESP32Async version of AsyncWebServer needs this? Or may ESP32 S2...
-
+	DEBUG_WM(request->url());
+	DEBUG_WM(F("Request redirected to captive portal, AP IP="));
+	DEBUG_WM(WiFi.softAPIP());
+	DEBUG_WM(F("Client IP="));
+	DEBUG_WM(request->client()->localIP());
 		AsyncWebServerResponse *response = request->beginResponse(302,
 				"text/html", "");
 		response->addHeader("Location",

@@ -41,17 +41,19 @@ const char HTTP_SCRIPT[] PROGMEM
 const char HTTP_HEAD_END[] PROGMEM
 		= "</head><body><div style='text-align:left;display:inline-block;min-width:260px;'>";
 const char HTTP_PORTAL_OPTIONS[] PROGMEM
-		= "<form action=\"/wifi\" method=\"get\"><button>Configure WiFi</button></form><br/><form action=\"/0wifi\" method=\"get\"><button>Configure WiFi (No Scan)</button></form><br/><form action=\"/i\" method=\"get\"><button>Info</button></form><br/><form action=\"/r\" method=\"post\"><button>Reset</button></form>";
+		= "<a href=\"/wifi?static=0\"><button>Configure WiFi</button></a><p/><a href=\"/wifi?static=1\"><button>Configure Static WiFi</button></a><p/><a href=\"/i\"><button>Info</button></a><p/><form action=\"/r\" method=\"post\"><button>Reset</button></form>";
 const char HTTP_ITEM[]
 		= "<div><a href='#p' onclick='c(this)'>%s</a>&nbsp;<span class='q %c'>%d%</span></div>";
 const char HTTP_FORM_START[] PROGMEM
 		= "<form method='get' action='wifisave'><input id='s' name='s' autocapitalize='none' length=32 placeholder='SSID'><br/><input id='p' name='p' length=64 type='password' placeholder='password'><p><input type='checkbox' style='width:auto' onclick='t()'><label for='p'>Show Password</label><br>";
 const char HTTP_FORM_PARAM[] PROGMEM
-		= "<br/><input id='{i}' name='{n}' length={l} placeholder='{p}' value='{v}' {c}>";
+		= "<br/><label for='{i}'>{p}</label><input id='{i}' name='{n}' length={l} value='{v}' {c}>";
 const char HTTP_FORM_END[] PROGMEM
 		= "<br/><button type='submit'>save</button></form>";
 const char HTTP_SCAN_LINK[] PROGMEM
-		= "<br/><div class=\"c\"><a href=\"/wifi?scan=1\">Scan</a></div>";
+		= "<br/><div class=\"c\"><a href=\"/wifi?static={s}&scan=1\"><button>Scan</button></a></div>";
+const char HTTP_SCAN_REFRESH[] PROGMEM
+		= "<meta http-equiv=\"refresh\" content=\"5; url=/wifi?static={s}\">";
 const char HTTP_SAVED[] PROGMEM
 		= "<div>Credentials Saved<br />Trying to connect ESP to network.<br />If it fails reconnect to AP to try again</div>";
 const char HTTP_END[] PROGMEM = "</div></body></html>";
@@ -179,7 +181,6 @@ private:
 
 	AsyncWebHandler* rootApHandler;
 	AsyncWebHandler* wifiApHandler;
-	AsyncWebHandler* wifi0ApHandler;
 	AsyncWebHandler* wifiSaveApHandler;
 	AsyncWebHandler* iApHandler;
 	AsyncWebHandler* rApHandler;
@@ -206,7 +207,7 @@ private:
 	void sendInfo(AsyncResponseStream *response);
 
 	void handleRoot(AsyncWebServerRequest*);
-	void handleWifi(AsyncWebServerRequest*, bool scan);
+	void handleWifi(AsyncWebServerRequest*);
 	void handleWifiSave(AsyncWebServerRequest*);
 	void handleInfo(AsyncWebServerRequest*);
 	void handleReset(AsyncWebServerRequest*);
