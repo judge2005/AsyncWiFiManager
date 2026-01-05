@@ -209,14 +209,13 @@ void AsyncWiFiManager::_setupConfigPortal() {
 	if (!_portalSet) {
 		_portalSet = true;
 		/* Setup web pages: root, wifi config pages, SO captive portal detectors and not found. */
-		rootApHandler = &server->on("/", std::bind(&AsyncWiFiManager::handleRoot, this,std::placeholders::_1)).setFilter(ON_AP_FILTER);
-		wifiApHandler = &server->on("/wifi", HTTP_GET, std::bind(&AsyncWiFiManager::handleWifi, this, std::placeholders::_1)).setFilter(ON_AP_FILTER);
-		wifiSaveApHandler = &server->on("/wifisave", std::bind(&AsyncWiFiManager::handleWifiSave,this,std::placeholders::_1)).setFilter(ON_AP_FILTER);
-		iApHandler = &server->on("/i", std::bind(&AsyncWiFiManager::handleInfo,this, std::placeholders::_1)).setFilter(ON_AP_FILTER);
-		rApHandler = &server->on("/r", std::bind(&AsyncWiFiManager::handleReset, this,std::placeholders::_1)).setFilter(ON_AP_FILTER);
-		//server->on("/generate_204", std::bind(&AsyncWiFiManager::handle204, this));  //Android/Chrome OS captive portal check.
-		fwLinkApHandler = &server->on("/fwlink", std::bind(&AsyncWiFiManager::handleRoot, this,std::placeholders::_1)).setFilter(ON_AP_FILTER);  //Microsoft captive portal. Maybe not needed. Might be handled by notFound handler.
-		server->onNotFound (std::bind(&AsyncWiFiManager::handleNotFound,this,std::placeholders::_1));
+		rootApHandler = &server->on("/", [this](AsyncWebServerRequest *req){ this->handleRoot(req); }).setFilter(ON_AP_FILTER);
+        wifiApHandler = &server->on("/wifi", HTTP_GET, [this](AsyncWebServerRequest *req){ this->handleWifi(req); }).setFilter(ON_AP_FILTER);
+        wifiSaveApHandler = &server->on("/wifisave", [this](AsyncWebServerRequest *req){ this->handleWifiSave(req); }).setFilter(ON_AP_FILTER);
+        iApHandler = &server->on("/i", [this](AsyncWebServerRequest *req){ this->handleInfo(req); }).setFilter(ON_AP_FILTER);
+        rApHandler = &server->on("/r", [this](AsyncWebServerRequest *req){ this->handleReset(req); }).setFilter(ON_AP_FILTER);
+        fwLinkApHandler = &server->on("/fwlink", [this](AsyncWebServerRequest *req){ this->handleRoot(req); }).setFilter(ON_AP_FILTER);
+        server->onNotFound([this](AsyncWebServerRequest *req){ this->handleNotFound(req); });
 		server->begin(); // Web server start
 	}
 }
@@ -270,9 +269,9 @@ bool AsyncWiFiManager::start() {
 	DEBUG_WM(F(""));
 
 	WiFi.setAutoReconnect(true);
-	WiFi.setAutoConnect(false);
 	WiFi.persistent(true);
 #ifdef ESP8266
+	WiFi.setAutoConnect(false);
 	stationConnectedHandler = WiFi.onStationModeConnected(std::bind(&AsyncWiFiManager::onConnected, this, std::placeholders::_1));
 	stationDisconnectedHandler = WiFi.onStationModeDisconnected(std::bind(&AsyncWiFiManager::onDisconnected, this, std::placeholders::_1));
 #else
