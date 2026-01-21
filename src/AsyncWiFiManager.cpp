@@ -103,7 +103,7 @@ void AsyncWiFiManager::_cacheHeads() {
 }
 
 void AsyncWiFiManager::setHostname(const char* hostname) {
-#ifdef ARDUINO_ESP8266_RELEASE_2_3_0
+#if ARDUINO_ESP8266_MAJOR < 3
 	WiFi.hostname(hostname);
 #else
 	WiFi.setHostname(hostname);
