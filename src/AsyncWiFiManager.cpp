@@ -616,7 +616,7 @@ void AsyncWiFiManager::_stopConfigPortal() {
 
 	if (wifiSSIDs != NULL) {
 		delete[] wifiSSIDs;
-		wifiSSIDs == NULL;
+		wifiSSIDs = NULL;
 	}
 
 	wifiSSIDCount = 0;
