@@ -55,7 +55,7 @@ const char HTTP_SCAN_LINK[] PROGMEM
 const char HTTP_SCAN_REFRESH[] PROGMEM
 		= "<meta http-equiv=\"refresh\" content=\"2; url=/wifi?static={s}\">";
 const char HTTP_SAVED[] PROGMEM
-		= "<div>Credentials Saved<br />Trying to connect ESP to network.<br />If it fails reconnect to AP to try again</div>";
+		= "<div>Saved. Connecting to this network.<br />Once connected, the access point closes 30 seconds later.<br />If it can't connect, the <a href='/i'>Info</a> page says why, and the access point stays on so you can try again.</div>";
 const char HTTP_END[] PROGMEM = "</div></body></html>";
 
 #define WIFI_MANAGER_MAX_PARAMS 10
@@ -139,6 +139,9 @@ public:
 	void startConfigPortal(const char* ssid, const char* pass);
 	bool isAP();
 
+	// Why the last try at joining a network failed, or NULL. For showing to people. It's a guess when it's
+	// the password, since a router usually just stops answering.
+	const char* connectProblem();
 	// Called with the portal's form when it's saved, before anything in it is used
 	void setSaveFormCallback(void (*func)(AsyncWebServerRequest*));
 
@@ -152,6 +155,7 @@ private:
 	void _setupConfigPortal();
 	wl_status_t _connectWiFi();
 	void _scanNetworks();
+	String _savedSSID();
 	bool _start();
 	void _claim();
 	void _release();
@@ -175,6 +179,7 @@ private:
 	int _loop_ap_state = -1;
 	bool _loop_scan = false;
 	bool _scanFailed = false;		// The last scan failed, so the list is from an earlier one
+	uint8_t _lastDisconnectReason = 0;	// Why the last connection failed. 0 once one works.
 	bool _dnsRunning = false;		// Make calls to dns server idempotent
 	String _router_ssid;
 	String _router_pass;

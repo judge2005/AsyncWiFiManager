@@ -108,7 +108,7 @@ AsyncWiFiManager::AsyncWiFiManager(AsyncWebServer *server, DNSServer *dns) : ser
 
 void AsyncWiFiManager::_cacheHeads() {
 	_wifiSaveHead = FPSTR(WFM_HTTP_HEAD);
-	_wifiSaveHead.replace("{v}", "Credentials Saved");
+	_wifiSaveHead.replace("{v}", "Saved");
 
 	_wifiHead = FPSTR(WFM_HTTP_HEAD);
 	_wifiHead.replace("{v}", "Config ESP");
@@ -899,6 +899,10 @@ void AsyncWiFiManager::handleWifiSave(AsyncWebServerRequest *request) {
 		_saveformcallback(request);
 	}
 
+	_claim();
+	_lastDisconnectReason = 0;	// Whatever went wrong before, it's about to try something new
+	_release();
+
 	//SAVE/connect here
 	_refresh_info = true;
 	_router_ssid = request->arg("s").c_str();
@@ -956,7 +960,7 @@ void AsyncWiFiManager::handleWifiSave(AsyncWebServerRequest *request) {
 	response->print(FPSTR(HTTP_SCRIPT));
 	response->print(FPSTR(HTTP_STYLE));
 	response->print(_customHeadHTML);
-	response->print(F("<meta http-equiv=\"refresh\" content=\"15; url=/i\">"));
+	response->print(F("<meta http-equiv=\"refresh\" content=\"8; url=/i\">"));
 	response->print(FPSTR(HTTP_HEAD_END));
 	response->print(FPSTR(HTTP_SAVED));
 	response->print(FPSTR(HTTP_END));
@@ -1028,20 +1032,38 @@ void AsyncWiFiManager::handleInfo(AsyncWebServerRequest *request) {
 
 	AsyncResponseStream *response = request->beginResponseStream("text/html");
 
+	bool connected = WiFi.isConnected();
+	String network = htmlEscape(_savedSSID());
+	const char *problem = connectProblem();
+
 	response->print(_infoHead);
 	response->print(FPSTR(HTTP_SCRIPT));
 	response->print(FPSTR(HTTP_STYLE));
 	response->print(_customHeadHTML);
-	if (_connect == true) {
-		response->print(F("<meta http-equiv=\"refresh\" content=\"5; url=/i\">"));
+	if (!connected && network.length() > 0) {
+		response->print(F("<meta http-equiv=\"refresh\" content=\"5; url=/i\">"));	// Until there's good news
 	}
 	response->print(FPSTR(HTTP_HEAD_END));
-	response->print(F("<dl>"));
-	if (_connect == true) {
-		response->print(F("<dt>Trying to connect</dt><dd>"));
-		response->print(WiFi.status());
-		response->print(F("</dd>"));
+	response->print(F("<dl><dt>WiFi</dt><dd>"));
+	if (connected) {
+		response->print(F("Connected to "));
+		response->print(htmlEscape(WiFi.SSID()));
+		response->print(F(" at "));
+		response->print(WiFi.localIP().toString());
+	} else if (network.length() == 0) {
+		response->print(F("No network chosen"));
+	} else if (problem != NULL) {
+		response->print(F("Can't join "));
+		response->print(network);
+		response->print(F(": "));
+		response->print(problem);
+		response->print(F("<br>It keeps trying."));
+	} else {
+		response->print(F("Connecting to "));
+		response->print(network);
+		response->print(F("..."));
 	}
+	response->print(F("</dd>"));
 
 	sendInfo(response);
 
@@ -1158,6 +1180,30 @@ void AsyncWiFiManager::setSaveFormCallback(void (*func)(AsyncWebServerRequest*))
 	_saveformcallback = func;
 }
 
+// The network it's been told to join, whether it has joined it or not
+String AsyncWiFiManager::_savedSSID() {
+	if (_router_ssid.length() > 0) {
+		return _router_ssid;
+	}
+#ifdef ESP32
+	wifi_config_t conf;
+	char name[sizeof(conf.sta.ssid) + 1] = "";
+	if (esp_wifi_get_config((wifi_interface_t)ESP_IF_WIFI_STA, &conf) == ESP_OK) {
+		strncpy(name, reinterpret_cast<char*>(conf.sta.ssid), sizeof(conf.sta.ssid));	// Not ended if it's the longest there is
+	}
+	return String(name);
+#else
+	return WiFi.SSID();
+#endif
+}
+
+// The ESP8266 and ESP32 number these the same, but name them differently
+#ifdef ESP8266
+#define DISCONNECT_REASON(name) WIFI_DISCONNECT_REASON_##name
+#else
+#define DISCONNECT_REASON(name) WIFI_REASON_##name
+#endif
+
 #ifdef ESP8266
 void AsyncWiFiManager::onStationIP(const WiFiEventStationModeGotIP& evt) {
 	_claim();
@@ -1170,6 +1216,7 @@ void AsyncWiFiManager::onConnected(const WiFiEventStationModeConnected& evt) {
 	DEBUG_WM(F("Connected"));
 	_claim();
 	_connectRetryTimeout = 0;
+	_lastDisconnectReason = 0;
 	_release();
 }
 
@@ -1178,6 +1225,9 @@ void AsyncWiFiManager::onDisconnected(const WiFiEventStationModeDisconnected& ev
 	_claim();
 	_lastConnectTime = millis();
 	_connectRetryTimeout = 10000;	// ms
+	if (evt.reason != DISCONNECT_REASON(ASSOC_LEAVE)) {	// That's this library giving up on a try
+		_lastDisconnectReason = evt.reason;
+	}
 	_release();
 }
 #else
@@ -1192,17 +1242,42 @@ void AsyncWiFiManager::onConnected(WiFiEvent_t event, WiFiEventInfo_t info) {
 	DEBUG_WM(F("Connected"));
 	_claim();
 	_connectRetryTimeout = 0;
+	_lastDisconnectReason = 0;
 	_release();
 }
 
 void AsyncWiFiManager::onDisconnected(WiFiEvent_t event, WiFiEventInfo_t info) {
 	DEBUG_WM(F("Disconnected"));
+#if ESP_ARDUINO_VERSION_MAJOR >= 2
+	uint8_t reason = info.wifi_sta_disconnected.reason;
+#else
+	uint8_t reason = info.disconnected.reason;
+#endif
 	_claim();
 	_lastConnectTime = millis();
 	_connectRetryTimeout = 10000;	// ms
+	if (reason != DISCONNECT_REASON(ASSOC_LEAVE)) {	// That's this library giving up on a try
+		_lastDisconnectReason = reason;
+	}
 	_release();
 }
 #endif
+
+const char* AsyncWiFiManager::connectProblem() {
+	switch (_lastDisconnectReason) {
+		case 0:
+			return NULL;
+		case DISCONNECT_REASON(NO_AP_FOUND):
+			return "Network not found";
+		case DISCONNECT_REASON(AUTH_FAIL):
+		case DISCONNECT_REASON(MIC_FAILURE):
+		case DISCONNECT_REASON(4WAY_HANDSHAKE_TIMEOUT):
+		case DISCONNECT_REASON(HANDSHAKE_TIMEOUT):
+			return "Wrong password?";
+		default:
+			return "Can't connect";
+	}
+}
 
 //start up connected callback
 void AsyncWiFiManager::setConnectedCallback(void (*func)(void)) {
