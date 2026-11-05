@@ -330,8 +330,10 @@ bool AsyncWiFiManager::_start() {
 	}
 
 	unsigned long startMs = millis();
+	// With no network to join, there's nothing to wait for
+	unsigned long timeout = _savedSSID().length() > 0 ? _connectTimeout : 0;
 
-	while (!WiFi.isConnected() && (millis() - startMs < _connectTimeout)) {
+	while (!WiFi.isConnected() && (millis() - startMs < timeout)) {
 		delay(10);
 	}
 
