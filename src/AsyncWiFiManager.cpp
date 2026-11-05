@@ -111,7 +111,7 @@ void AsyncWiFiManager::_cacheHeads() {
 	_wifiSaveHead.replace("{v}", "Saved");
 
 	_wifiHead = FPSTR(WFM_HTTP_HEAD);
-	_wifiHead.replace("{v}", "Config ESP");
+	_wifiHead.replace("{v}", "Configure WiFi");
 
 	_rootHead = FPSTR(WFM_HTTP_HEAD);
 	_rootHead.replace("{v}", "Options");
@@ -732,7 +732,6 @@ void AsyncWiFiManager::handleRoot(AsyncWebServerRequest *request) {
 	response->print("<h1>");
 	response->print(_ap_ssid);
 	response->print("</h1>");
-	response->print(F("<h3>AsyncWiFiManager</h3>"));
 	response->print(FPSTR(HTTP_PORTAL_OPTIONS));
 	response->print(_customOptionsHTML);
 	response->print(FPSTR(HTTP_END));
@@ -828,6 +827,7 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 		item.replace("{p}", "Static IP");
 		item.replace("{l}", "15");
 		item.replace("{v}", _sta_static_ip.toString());
+		item.replace("{c}", "");
 
 		response->print(item);
 
@@ -837,6 +837,7 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 		item.replace("{p}", "Static Gateway");
 		item.replace("{l}", "15");
 		item.replace("{v}", _sta_static_gw.toString());
+		item.replace("{c}", "");
 
 		response->print(item);
 
@@ -846,6 +847,7 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 		item.replace("{p}", "Subnet");
 		item.replace("{l}", "15");
 		item.replace("{v}", _sta_static_sn.toString());
+		item.replace("{c}", "");
 
 		response->print(item);
 
@@ -855,6 +857,7 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 		item.replace("{p}", "DNS1");
 		item.replace("{l}", "15");
 		item.replace("{v}", _sta_static_dns1.toString());
+		item.replace("{c}", "");
 
 		response->print(item);
 
@@ -864,6 +867,7 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 		item.replace("{p}", "DNS2");
 		item.replace("{l}", "15");
 		item.replace("{v}", _sta_static_dns2.toString());
+		item.replace("{c}", "");
 
 		response->print(item);
 
@@ -983,22 +987,16 @@ void AsyncWiFiManager::sendInfo(AsyncResponseStream *response) {
   response->print(getESP32ChipID());
 #endif
 	response->print(F("</dd>"));
+#if defined(ESP8266)
 	response->print(F("<dt>Flash Chip ID</dt><dd>"));
-#if defined(ESP8266)
 	response->print(ESP.getFlashChipId());
-#else
-  response->print(F("N/A for ESP32"));
-#endif
 	response->print(F("</dd>"));
-	response->print(F("<dt>IDE Flash Size</dt><dd>"));
-	response->print(ESP.getFlashChipSize());
-	response->print(F(" bytes</dd>"));
 	response->print(F("<dt>Real Flash Size</dt><dd>"));
-#if defined(ESP8266)
 	response->print(ESP.getFlashChipRealSize());
-#else
-  response->print(F("N/A for ESP32"));
+	response->print(F(" bytes</dd>"));
 #endif
+	response->print(F("<dt>Flash Size</dt><dd>"));
+	response->print(ESP.getFlashChipSize());
 	response->print(F(" bytes</dd>"));
 	response->print(F("<dt>Soft AP IP</dt><dd>"));
 	response->print(WiFi.softAPIP().toString());
@@ -1087,7 +1085,7 @@ void AsyncWiFiManager::handleReset(AsyncWebServerRequest *request) {
 	response->print(FPSTR(HTTP_STYLE));
 	response->print(_customHeadHTML);
 	response->print(FPSTR(HTTP_HEAD_END));
-	response->print(F("Module will reset in a few seconds."));
+	response->print(F("The device will restart in a few seconds."));
 	response->print(FPSTR(HTTP_END));
 
 	request->send(response);

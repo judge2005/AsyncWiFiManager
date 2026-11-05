@@ -45,7 +45,7 @@ const char HTTP_PORTAL_OPTIONS[] PROGMEM
 const char HTTP_ITEM[]
 		= "<div><a href='#p' onclick='c(this)'>%s</a>&nbsp;<span class='q %c'>%d%%</span></div>";
 const char HTTP_FORM_START[] PROGMEM
-		= "<form method='post' action='wifisave'><input id='s' name='s' autocapitalize='none' length=32 placeholder='SSID'><br/><input id='p' name='p' length=64 type='password' placeholder='password'><p><input type='checkbox' style='width:auto' onclick='t()'><label for='p'>Show Password</label><br>";
+		= "<form method='post' action='wifisave'><input id='s' name='s' autocapitalize='none' maxlength=32 placeholder='SSID'><br/><input id='p' name='p' maxlength=64 type='password' placeholder='password'><p><input type='checkbox' id='sp' style='width:auto' onclick='t()'><label for='sp'>Show Password</label><br>";
 const char HTTP_FORM_PARAM[] PROGMEM
 		= "<br/><label for='{i}'>{p}</label><input id='{i}' name='{n}' maxlength={l} value='{v}' {c}>";
 const char HTTP_FORM_END[] PROGMEM
