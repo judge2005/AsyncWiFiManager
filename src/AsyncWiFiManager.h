@@ -53,7 +53,7 @@ const char HTTP_FORM_END[] PROGMEM
 const char HTTP_SCAN_LINK[] PROGMEM
 		= "<br/><div class=\"c\"><a href=\"/wifi?static={s}&scan=1\"><button>Scan</button></a></div>";
 const char HTTP_SCAN_REFRESH[] PROGMEM
-		= "<meta http-equiv=\"refresh\" content=\"5; url=/wifi?static={s}\">";
+		= "<meta http-equiv=\"refresh\" content=\"2; url=/wifi?static={s}\">";
 const char HTTP_SAVED[] PROGMEM
 		= "<div>Credentials Saved<br />Trying to connect ESP to network.<br />If it fails reconnect to AP to try again</div>";
 const char HTTP_END[] PROGMEM = "</div></body></html>";
@@ -171,6 +171,7 @@ private:
 	bool _isAP = false;				// True if AP is enabled
 	int _loop_ap_state = -1;
 	bool _loop_scan = false;
+	bool _scanFailed = false;		// The last scan failed, so the list is from an earlier one
 	bool _dnsRunning = false;		// Make calls to dns server idempotent
 	String _router_ssid;
 	String _router_pass;
