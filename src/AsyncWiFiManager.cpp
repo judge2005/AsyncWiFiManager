@@ -233,7 +233,7 @@ void AsyncWiFiManager::_setupConfigPortal() {
 		/* Setup web pages: root, wifi config pages, SO captive portal detectors and not found. */
 		rootApHandler = &server->on("/", [this](AsyncWebServerRequest *req){ this->handleRoot(req); }).setFilter(ON_AP_FILTER);
         wifiApHandler = &server->on("/wifi", HTTP_GET, [this](AsyncWebServerRequest *req){ this->handleWifi(req); }).setFilter(ON_AP_FILTER);
-        wifiSaveApHandler = &server->on("/wifisave", [this](AsyncWebServerRequest *req){ this->handleWifiSave(req); }).setFilter(ON_AP_FILTER);
+        wifiSaveApHandler = &server->on("/wifisave", HTTP_POST, [this](AsyncWebServerRequest *req){ this->handleWifiSave(req); }).setFilter(ON_AP_FILTER);
         iApHandler = &server->on("/i", [this](AsyncWebServerRequest *req){ this->handleInfo(req); }).setFilter(ON_AP_FILTER);
         rApHandler = &server->on("/r", [this](AsyncWebServerRequest *req){ this->handleReset(req); }).setFilter(ON_AP_FILTER);
         fwLinkApHandler = &server->on("/fwlink", [this](AsyncWebServerRequest *req){ this->handleRoot(req); }).setFilter(ON_AP_FILTER);
@@ -895,6 +895,10 @@ void AsyncWiFiManager::setAPCredentials(const char *ssid, const char *pass) {
 void AsyncWiFiManager::handleWifiSave(AsyncWebServerRequest *request) {
 	DEBUG_WM(F("WiFi save"));
 
+	if (_saveformcallback != NULL) {
+		_saveformcallback(request);
+	}
+
 	//SAVE/connect here
 	_refresh_info = true;
 	_router_ssid = request->arg("s").c_str();
@@ -1148,6 +1152,10 @@ void AsyncWiFiManager::setAPCallback(void (*func)(AsyncWiFiManager *myAsyncWiFiM
 //start up save config callback
 void AsyncWiFiManager::setSaveConfigCallback(void (*func)(void)) {
 	_savecallback = func;
+}
+
+void AsyncWiFiManager::setSaveFormCallback(void (*func)(AsyncWebServerRequest*)) {
+	_saveformcallback = func;
 }
 
 #ifdef ESP8266

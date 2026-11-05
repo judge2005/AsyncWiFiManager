@@ -45,7 +45,7 @@ const char HTTP_PORTAL_OPTIONS[] PROGMEM
 const char HTTP_ITEM[]
 		= "<div><a href='#p' onclick='c(this)'>%s</a>&nbsp;<span class='q %c'>%d%%</span></div>";
 const char HTTP_FORM_START[] PROGMEM
-		= "<form method='get' action='wifisave'><input id='s' name='s' autocapitalize='none' length=32 placeholder='SSID'><br/><input id='p' name='p' length=64 type='password' placeholder='password'><p><input type='checkbox' style='width:auto' onclick='t()'><label for='p'>Show Password</label><br>";
+		= "<form method='post' action='wifisave'><input id='s' name='s' autocapitalize='none' length=32 placeholder='SSID'><br/><input id='p' name='p' length=64 type='password' placeholder='password'><p><input type='checkbox' style='width:auto' onclick='t()'><label for='p'>Show Password</label><br>";
 const char HTTP_FORM_PARAM[] PROGMEM
 		= "<br/><label for='{i}'>{p}</label><input id='{i}' name='{n}' length={l} value='{v}' {c}>";
 const char HTTP_FORM_END[] PROGMEM
@@ -138,6 +138,9 @@ public:
 	void startConfigPortal();
 	void startConfigPortal(const char* ssid, const char* pass);
 	bool isAP();
+
+	// Called with the portal's form when it's saved, before anything in it is used
+	void setSaveFormCallback(void (*func)(AsyncWebServerRequest*));
 
 	void dumpInfo();
 
@@ -246,6 +249,7 @@ private:
 	void (*_apcallback)(AsyncWiFiManager*) = NULL;	// Call when AP mode state changes
 
 	void (*_savecallback)(void) = NULL;				// Call when ConfigPortal saves data
+	void (*_saveformcallback)(AsyncWebServerRequest*) = NULL;	// Call with ConfigPortal's form as it's saved
 
     bool _loop_call_connected = false;					// call the connected callback when true - avoids re-entrancy issues
 	void (*_connectedcallback)(void) = NULL;		// Call when we have an IP address
