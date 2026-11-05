@@ -62,7 +62,7 @@ void AsyncWiFiManagerParameter::init(const char *id, const char *placeholder, co
 	_placeholder = placeholder;
 	_length = length;
 	_value = new char[length + 1];
-	for (int i = 0; i < length; i++) {
+	for (int i = 0; i <= length; i++) {
 		_value[i] = 0;
 	}
 	if (defaultValue != NULL) {
@@ -792,7 +792,7 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 	response->print("<br/>");
 
 	response->print(FPSTR(HTTP_FORM_START));
-	char parLength[2];
+	char parLength[4];
 	// add the extra parameters to the form
 	for (int i = 0; i < _paramsCount; i++) {
 		if (_params[i] == NULL) {
@@ -804,7 +804,7 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 			pitem.replace("{i}", _params[i]->getID());
 			pitem.replace("{n}", _params[i]->getID());
 			pitem.replace("{p}", _params[i]->getPlaceholder());
-			snprintf(parLength, 2, "%d", _params[i]->getValueLength());
+			snprintf(parLength, sizeof(parLength), "%d", _params[i]->getValueLength());
 			pitem.replace("{l}", parLength);
 			pitem.replace("{v}", htmlEscape(_params[i]->getValue()));
 			pitem.replace("{c}", _params[i]->getCustomHTML());
@@ -916,7 +916,7 @@ void AsyncWiFiManager::handleWifiSave(AsyncWebServerRequest *request) {
 		//read parameter
 		String value = request->arg(_params[i]->getID()).c_str();
 		//store it in array
-		value.toCharArray(_params[i]->_value, _params[i]->_length);
+		value.toCharArray(_params[i]->_value, _params[i]->_length + 1);
 		DEBUG_WM(F("Parameter"));
 		DEBUG_WM(_params[i]->getID());
 		DEBUG_WM(value);
