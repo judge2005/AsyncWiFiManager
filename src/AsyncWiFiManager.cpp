@@ -22,6 +22,24 @@
 // Looking for a network takes the radio away from the access point, so it's done less while someone is on it
 static const unsigned long BUSY_AP_RETRY_MS = 60000;
 
+// Puts text in a page as itself rather than as HTML. Network names can have anything in them.
+static String htmlEscape(const String &text) {
+	String escaped;
+	escaped.reserve(text.length());
+	for (unsigned int i = 0; i < text.length(); i++) {
+		char c = text.charAt(i);
+		switch (c) {
+			case '&': escaped += F("&amp;"); break;
+			case '<': escaped += F("&lt;"); break;
+			case '>': escaped += F("&gt;"); break;
+			case '"': escaped += F("&quot;"); break;
+			case '\'': escaped += F("&#39;"); break;
+			default: escaped += c; break;
+		}
+	}
+	return escaped;
+}
+
 AsyncWiFiManagerParameter::AsyncWiFiManagerParameter(const char *custom) {
 	_id = NULL;
 	_placeholder = NULL;
@@ -482,7 +500,7 @@ void AsyncWiFiManager::sendNetworkList(AsyncResponseStream *response) {
 #endif
 				locked = 'l';
 			}
-			response->printf(HTTP_ITEM, wifiSSIDs[i].SSID.c_str(), locked, quality);
+			response->printf(HTTP_ITEM, htmlEscape(wifiSSIDs[i].SSID).c_str(), locked, quality);
 		} else {
 			DEBUG_WM(F("Skipping due to quality"));
 		}
@@ -737,7 +755,7 @@ static String oneString("1");
 void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 	DEBUG_WM(F("Handle wifi"));
 
-	String useStatic = request->arg("static");
+	String useStatic = request->arg("static") == oneString ? oneString : String("0");
 
 	_claim();
 	if (request->hasParam("scan")) {
@@ -788,7 +806,7 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 			pitem.replace("{p}", _params[i]->getPlaceholder());
 			snprintf(parLength, 2, "%d", _params[i]->getValueLength());
 			pitem.replace("{l}", parLength);
-			pitem.replace("{v}", _params[i]->getValue());
+			pitem.replace("{v}", htmlEscape(_params[i]->getValue()));
 			pitem.replace("{c}", _params[i]->getCustomHTML());
 		} else {
 			pitem = _params[i]->getCustomHTML();
@@ -986,11 +1004,11 @@ void AsyncWiFiManager::sendInfo(AsyncResponseStream *response) {
 #else
   wifi_config_t conf_current;
   esp_wifi_get_config(WIFI_IF_AP, &conf_current);
-  response->print(String(reinterpret_cast<char*>(conf_current.ap.ssid)));
+  response->print(htmlEscape(String(reinterpret_cast<char*>(conf_current.ap.ssid))));
 #endif
 	response->print(F("</dd>"));
 	response->print(F("<dt>Network SSID</dt><dd>"));
-	response->print(WiFi.SSID());
+	response->print(htmlEscape(WiFi.SSID()));
 	response->print(F("</dd>"));
 	response->print(F("<dt>Station IP</dt><dd>"));
 	response->print(WiFi.localIP().toString());
