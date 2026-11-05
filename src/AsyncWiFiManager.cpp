@@ -19,6 +19,9 @@
 #endif
 #include <new>
 
+// Looking for a network takes the radio away from the access point, so it's done less while someone is on it
+static const unsigned long BUSY_AP_RETRY_MS = 60000;
+
 AsyncWiFiManagerParameter::AsyncWiFiManagerParameter(const char *custom) {
 	_id = NULL;
 	_placeholder = NULL;
@@ -393,13 +396,18 @@ void AsyncWiFiManager::loop() {
 	if (_connectRetryTimeout > 0 || _loop_ap_state >= 0 || _loop_scan || _loop_call_connected) {
 		if (_connectRetryTimeout > 0) {
 			if (now - _lastConnectTime > _connectRetryTimeout) {
-				DEBUG_WM(_connectRetryTimeout);
-				_lastConnectTime = now;
+				bool early = now - _lastConnectTime <= BUSY_AP_RETRY_MS;
 				_release();
+				if (!early || !_isAP || WiFi.softAPgetStationNum() == 0) {
+					DEBUG_WM(_connectRetryTimeout);
+					_claim();
+					_lastConnectTime = now;
+					_release();
 #ifdef ESP32
-				WiFi.disconnect();
+					WiFi.disconnect();
 #endif
-				_connectWiFi();
+					_connectWiFi();
+				}
 			} else {
 				_release();
 			}
