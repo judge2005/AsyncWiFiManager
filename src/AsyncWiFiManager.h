@@ -37,25 +37,25 @@ const char WFM_HTTP_HEAD[] PROGMEM
 const char HTTP_STYLE[] PROGMEM
 		= "<style>.c{text-align: center;} div,input{padding:5px;font-size:1em;} input{width:95%;} body{text-align: center;font-family:verdana;} button{border:0;border-radius:0.3rem;background-color:#1fa3ec;color:#fff;line-height:2.4rem;font-size:1.2rem;width:100%;} .q{float: right;width: 64px;text-align: right;} .l{background: url(\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAALVBMVEX///8EBwfBwsLw8PAzNjaCg4NTVVUjJiZDRUUUFxdiZGSho6OSk5Pg4eFydHTCjaf3AAAAZElEQVQ4je2NSw7AIAhEBamKn97/uMXEGBvozkWb9C2Zx4xzWykBhFAeYp9gkLyZE0zIMno9n4g19hmdY39scwqVkOXaxph0ZCXQcqxSpgQpONa59wkRDOL93eAXvimwlbPbwwVAegLS1HGfZAAAAABJRU5ErkJggg==\") no-repeat left center;background-size: 1em;}</style>";
 const char HTTP_SCRIPT[] PROGMEM
-		= "<script>function c(l){document.getElementById('s').value=l.innerText||l.textContent;document.getElementById('p').focus();};function t(){var x=document.getElementById('p');if(x.type === 'password'){x.type='text';}else{x.type='password';}}</script>";
+		= "<script>function c(l){document.getElementById('s').value=l.textContent;document.getElementById('p').focus();};function t(){var x=document.getElementById('p');if(x.type === 'password'){x.type='text';}else{x.type='password';}}</script>";
 const char HTTP_HEAD_END[] PROGMEM
 		= "</head><body><div style='text-align:left;display:inline-block;min-width:260px;'>";
 const char HTTP_PORTAL_OPTIONS[] PROGMEM
 		= "<a href=\"/wifi?static=0\"><button>Configure WiFi</button></a><p/><a href=\"/wifi?static=1\"><button>Configure Static WiFi</button></a><p/><a href=\"/i\"><button>Info</button></a><p/><form action=\"/r\" method=\"post\"><button>Reset</button></form>";
 const char HTTP_ITEM[]
-		= "<div><a href='#p' onclick='c(this)'>%s</a>&nbsp;<span class='q %c'>%d%</span></div>";
+		= "<div><a href='#p' onclick='c(this)'>%s</a>&nbsp;<span class='q %c'>%d%%</span></div>";
 const char HTTP_FORM_START[] PROGMEM
-		= "<form method='get' action='wifisave'><input id='s' name='s' autocapitalize='none' length=32 placeholder='SSID'><br/><input id='p' name='p' length=64 type='password' placeholder='password'><p><input type='checkbox' style='width:auto' onclick='t()'><label for='p'>Show Password</label><br>";
+		= "<form method='post' action='wifisave'><input id='s' name='s' autocapitalize='none' maxlength=32 placeholder='SSID'><br/><input id='p' name='p' maxlength=64 type='password' placeholder='password'><p><input type='checkbox' id='sp' style='width:auto' onclick='t()'><label for='sp'>Show Password</label><br>";
 const char HTTP_FORM_PARAM[] PROGMEM
-		= "<br/><label for='{i}'>{p}</label><input id='{i}' name='{n}' length={l} value='{v}' {c}>";
+		= "<br/><label for='{i}'>{p}</label><input id='{i}' name='{n}' maxlength={l} value='{v}' {c}>";
 const char HTTP_FORM_END[] PROGMEM
 		= "<br/><button type='submit'>save</button></form>";
 const char HTTP_SCAN_LINK[] PROGMEM
 		= "<br/><div class=\"c\"><a href=\"/wifi?static={s}&scan=1\"><button>Scan</button></a></div>";
 const char HTTP_SCAN_REFRESH[] PROGMEM
-		= "<meta http-equiv=\"refresh\" content=\"5; url=/wifi?static={s}\">";
+		= "<meta http-equiv=\"refresh\" content=\"2; url=/wifi?static={s}\">";
 const char HTTP_SAVED[] PROGMEM
-		= "<div>Credentials Saved<br />Trying to connect ESP to network.<br />If it fails reconnect to AP to try again</div>";
+		= "<div>Saved. Connecting to this network.<br />Once connected, the access point closes 30 seconds later.<br />If it can't connect, the <a href='/i'>Info</a> page says why, and the access point stays on so you can try again.</div>";
 const char HTTP_END[] PROGMEM = "</div></body></html>";
 
 #define WIFI_MANAGER_MAX_PARAMS 10
@@ -139,6 +139,12 @@ public:
 	void startConfigPortal(const char* ssid, const char* pass);
 	bool isAP();
 
+	// Why the last try at joining a network failed, or NULL. For showing to people. It's a guess when it's
+	// the password, since a router usually just stops answering.
+	const char* connectProblem();
+	// Called with the portal's form when it's saved, before anything in it is used
+	void setSaveFormCallback(void (*func)(AsyncWebServerRequest*));
+
 	void dumpInfo();
 
 private:
@@ -149,6 +155,7 @@ private:
 	void _setupConfigPortal();
 	wl_status_t _connectWiFi();
 	void _scanNetworks();
+	String _savedSSID();
 	bool _start();
 	void _claim();
 	void _release();
@@ -171,6 +178,8 @@ private:
 	bool _isAP = false;				// True if AP is enabled
 	int _loop_ap_state = -1;
 	bool _loop_scan = false;
+	bool _scanFailed = false;		// The last scan failed, so the list is from an earlier one
+	uint8_t _lastDisconnectReason = 0;	// Why the last connection failed. 0 once one works.
 	bool _dnsRunning = false;		// Make calls to dns server idempotent
 	String _router_ssid;
 	String _router_pass;
@@ -245,6 +254,7 @@ private:
 	void (*_apcallback)(AsyncWiFiManager*) = NULL;	// Call when AP mode state changes
 
 	void (*_savecallback)(void) = NULL;				// Call when ConfigPortal saves data
+	void (*_saveformcallback)(AsyncWebServerRequest*) = NULL;	// Call with ConfigPortal's form as it's saved
 
     bool _loop_call_connected = false;					// call the connected callback when true - avoids re-entrancy issues
 	void (*_connectedcallback)(void) = NULL;		// Call when we have an IP address

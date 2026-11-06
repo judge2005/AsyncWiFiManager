@@ -17,6 +17,28 @@
 #else
 #include <core_version.h>
 #endif
+#include <new>
+
+// Looking for a network takes the radio away from the access point, so it's done less while someone is on it
+static const unsigned long BUSY_AP_RETRY_MS = 60000;
+
+// Puts text in a page as itself rather than as HTML. Network names can have anything in them.
+static String htmlEscape(const String &text) {
+	String escaped;
+	escaped.reserve(text.length());
+	for (unsigned int i = 0; i < text.length(); i++) {
+		char c = text.charAt(i);
+		switch (c) {
+			case '&': escaped += F("&amp;"); break;
+			case '<': escaped += F("&lt;"); break;
+			case '>': escaped += F("&gt;"); break;
+			case '"': escaped += F("&quot;"); break;
+			case '\'': escaped += F("&#39;"); break;
+			default: escaped += c; break;
+		}
+	}
+	return escaped;
+}
 
 AsyncWiFiManagerParameter::AsyncWiFiManagerParameter(const char *custom) {
 	_id = NULL;
@@ -40,7 +62,7 @@ void AsyncWiFiManagerParameter::init(const char *id, const char *placeholder, co
 	_placeholder = placeholder;
 	_length = length;
 	_value = new char[length + 1];
-	for (int i = 0; i < length; i++) {
+	for (int i = 0; i <= length; i++) {
 		_value[i] = 0;
 	}
 	if (defaultValue != NULL) {
@@ -86,10 +108,10 @@ AsyncWiFiManager::AsyncWiFiManager(AsyncWebServer *server, DNSServer *dns) : ser
 
 void AsyncWiFiManager::_cacheHeads() {
 	_wifiSaveHead = FPSTR(WFM_HTTP_HEAD);
-	_wifiSaveHead.replace("{v}", "Credentials Saved");
+	_wifiSaveHead.replace("{v}", "Saved");
 
 	_wifiHead = FPSTR(WFM_HTTP_HEAD);
-	_wifiHead.replace("{v}", "Config ESP");
+	_wifiHead.replace("{v}", "Configure WiFi");
 
 	_rootHead = FPSTR(WFM_HTTP_HEAD);
 	_rootHead.replace("{v}", "Options");
@@ -211,7 +233,7 @@ void AsyncWiFiManager::_setupConfigPortal() {
 		/* Setup web pages: root, wifi config pages, SO captive portal detectors and not found. */
 		rootApHandler = &server->on("/", [this](AsyncWebServerRequest *req){ this->handleRoot(req); }).setFilter(ON_AP_FILTER);
         wifiApHandler = &server->on("/wifi", HTTP_GET, [this](AsyncWebServerRequest *req){ this->handleWifi(req); }).setFilter(ON_AP_FILTER);
-        wifiSaveApHandler = &server->on("/wifisave", [this](AsyncWebServerRequest *req){ this->handleWifiSave(req); }).setFilter(ON_AP_FILTER);
+        wifiSaveApHandler = &server->on("/wifisave", HTTP_POST, [this](AsyncWebServerRequest *req){ this->handleWifiSave(req); }).setFilter(ON_AP_FILTER);
         iApHandler = &server->on("/i", [this](AsyncWebServerRequest *req){ this->handleInfo(req); }).setFilter(ON_AP_FILTER);
         rApHandler = &server->on("/r", [this](AsyncWebServerRequest *req){ this->handleReset(req); }).setFilter(ON_AP_FILTER);
         fwLinkApHandler = &server->on("/fwlink", [this](AsyncWebServerRequest *req){ this->handleRoot(req); }).setFilter(ON_AP_FILTER);
@@ -308,8 +330,10 @@ bool AsyncWiFiManager::_start() {
 	}
 
 	unsigned long startMs = millis();
+	// With no network to join, there's nothing to wait for
+	unsigned long timeout = _savedSSID().length() > 0 ? _connectTimeout : 0;
 
-	while (!WiFi.isConnected() && (millis() - startMs < _connectTimeout)) {
+	while (!WiFi.isConnected() && (millis() - startMs < timeout)) {
 		delay(10);
 	}
 
@@ -392,13 +416,18 @@ void AsyncWiFiManager::loop() {
 	if (_connectRetryTimeout > 0 || _loop_ap_state >= 0 || _loop_scan || _loop_call_connected) {
 		if (_connectRetryTimeout > 0) {
 			if (now - _lastConnectTime > _connectRetryTimeout) {
-				DEBUG_WM(_connectRetryTimeout);
-				_lastConnectTime = now;
+				bool early = now - _lastConnectTime <= BUSY_AP_RETRY_MS;
 				_release();
+				if (!early || !_isAP || WiFi.softAPgetStationNum() == 0) {
+					DEBUG_WM(_connectRetryTimeout);
+					_claim();
+					_lastConnectTime = now;
+					_release();
 #ifdef ESP32
-				WiFi.disconnect();
+					WiFi.disconnect();
 #endif
-				_connectWiFi();
+					_connectWiFi();
+				}
 			} else {
 				_release();
 			}
@@ -437,7 +466,9 @@ void AsyncWiFiManager::loop() {
 		if (_loop_scan) {
 			_release();
 			_scanNetworks();
+			_claim();
 			_loop_scan = false;
+			_release();
 		} else {
 			_release();
 		}
@@ -448,7 +479,13 @@ void AsyncWiFiManager::loop() {
 
 void AsyncWiFiManager::sendNetworkList(AsyncResponseStream *response) {
 	String pager;
+#ifdef ESP32
+	_claim();	// A scan on another task replaces the list
+#endif
 	//display networks in page
+	if (_scanFailed) {
+		response->print(F("<p>The scan failed, so this list may be out of date. Try again.</p>"));
+	}
 	for (int i = 0; i < wifiSSIDCount; i++) {
 		if (wifiSSIDs[i].duplicate == true) {
 			continue; // skip dups
@@ -465,7 +502,7 @@ void AsyncWiFiManager::sendNetworkList(AsyncResponseStream *response) {
 #endif
 				locked = 'l';
 			}
-			response->printf(HTTP_ITEM, wifiSSIDs[i].SSID.c_str(), locked, quality);
+			response->printf(HTTP_ITEM, htmlEscape(wifiSSIDs[i].SSID).c_str(), locked, quality);
 		} else {
 			DEBUG_WM(F("Skipping due to quality"));
 		}
@@ -474,6 +511,9 @@ void AsyncWiFiManager::sendNetworkList(AsyncResponseStream *response) {
 	if (wifiSSIDCount == 0) {
 		response->print(F("No networks found"));
 	}
+#ifdef ESP32
+	_release();
+#endif
 }
 
 void AsyncWiFiManager::copySSIDInfo(wifi_ssid_count_t n) {
@@ -490,22 +530,23 @@ void AsyncWiFiManager::copySSIDInfo(wifi_ssid_count_t n) {
 		DEBUG_WM(String("Found ") + n + " SSIDs");
 	}
 
+	// Made on the side and then swapped in, since a web page could be reading the list
+	WiFiResult *networks = NULL;
+	bool failed = n < 0;
+
 	if (n > 0) {
-		/* WE SHOULD MOVE THIS IN PLACE ATOMICALLY */
-		if (wifiSSIDs) {
-			delete[] wifiSSIDs;
-		}
+		networks = new (std::nothrow) WiFiResult[n];
+		failed = networks == NULL;
+	}
 
-		wifiSSIDs = new WiFiResult[n];
-		wifiSSIDCount = n;
-
+	if (networks != NULL) {
 		for (wifi_ssid_count_t i = 0; i < n; i++) {
-			wifiSSIDs[i].duplicate = false;
+			networks[i].duplicate = false;
 
 #if defined(ESP8266)
-			bool res = WiFi.getNetworkInfo(i, wifiSSIDs[i].SSID, wifiSSIDs[i].encryptionType, wifiSSIDs[i].RSSI, wifiSSIDs[i].BSSID, wifiSSIDs[i].channel, wifiSSIDs[i].isHidden);
+			bool res = WiFi.getNetworkInfo(i, networks[i].SSID, networks[i].encryptionType, networks[i].RSSI, networks[i].BSSID, networks[i].channel, networks[i].isHidden);
 #else
-            bool res = WiFi.getNetworkInfo(i, wifiSSIDs[i].SSID, wifiSSIDs[i].encryptionType, wifiSSIDs[i].RSSI, wifiSSIDs[i].BSSID, wifiSSIDs[i].channel);
+            bool res = WiFi.getNetworkInfo(i, networks[i].SSID, networks[i].encryptionType, networks[i].RSSI, networks[i].BSSID, networks[i].channel);
 #endif
 		}
 
@@ -514,8 +555,8 @@ void AsyncWiFiManager::copySSIDInfo(wifi_ssid_count_t n) {
 		// old sort
 		for (int i = 0; i < n; i++) {
 			for (int j = i + 1; j < n; j++) {
-				if (wifiSSIDs[j].RSSI > wifiSSIDs[i].RSSI) {
-					std::swap(wifiSSIDs[i], wifiSSIDs[j]);
+				if (networks[j].RSSI > networks[i].RSSI) {
+					std::swap(networks[i], networks[j]);
 				}
 			}
 		}
@@ -524,20 +565,33 @@ void AsyncWiFiManager::copySSIDInfo(wifi_ssid_count_t n) {
 		if (_removeDuplicateAPs) {
 			String cssid;
 			for (int i = 0; i < n; i++) {
-				if (wifiSSIDs[i].duplicate == true)
+				if (networks[i].duplicate == true)
 					continue;
-				cssid = wifiSSIDs[i].SSID;
+				cssid = networks[i].SSID;
 				for (int j = i + 1; j < n; j++) {
-					if (cssid == wifiSSIDs[j].SSID) {
-						DEBUG_WM("DUP AP: " + wifiSSIDs[j].SSID);
-						wifiSSIDs[j].duplicate = true; // set dup aps to NULL
+					if (cssid == networks[j].SSID) {
+						DEBUG_WM("DUP AP: " + networks[j].SSID);
+						networks[j].duplicate = true; // set dup aps to NULL
 					}
 				}
 			}
 		}
+	}
 
+	if (n >= 0) {
 		WiFi.scanDelete();
 	}
+
+	WiFiResult *old = NULL;
+	_claim();
+	_scanFailed = failed;
+	if (!failed) {
+		old = wifiSSIDs;
+		wifiSSIDs = networks;
+		wifiSSIDCount = n;
+	}
+	_release();
+	delete[] old;
 }
 
 void AsyncWiFiManager::startConfigPortal() {
@@ -561,6 +615,11 @@ void AsyncWiFiManager::stopConfigPortal(int timeoutMs) {
 }
 
 void AsyncWiFiManager::_scanNetworks() {
+#ifdef ESP32
+	if (WiFi.status() != WL_CONNECTED) {
+		WiFi.disconnect();	// ESP32, can't scan while trying to connect to an AP.
+	}
+#endif
 	wifi_ssid_count_t n = WiFi.scanNetworks(false);
 	copySSIDInfo(n);
 }
@@ -575,11 +634,6 @@ bool AsyncWiFiManager::_startConfigPortal() {
 		// For ESP8266, need to save the current SSID and password
 //		_router_ssid = WiFi.SSID();
 //		_router_pass = WiFi.psk();
-#else
-		wl_status_t status = WiFi.status();
-		if (status != WL_CONNECTED) {
-			WiFi.disconnect();	// ESP32, can't scan while trying to connect to an AP.
-		}
 #endif
 
 		_scanNetworks();
@@ -614,12 +668,13 @@ void AsyncWiFiManager::_stopConfigPortal() {
 		}
 	}
 
-	if (wifiSSIDs != NULL) {
-		delete[] wifiSSIDs;
-		wifiSSIDs == NULL;
-	}
-
+	_claim();
+	WiFiResult *networks = wifiSSIDs;
+	wifiSSIDs = NULL;
 	wifiSSIDCount = 0;
+	_scanFailed = false;
+	_release();
+	delete[] networks;
 
 	if (_portalSet){
 		_portalSet = false;
@@ -677,7 +732,6 @@ void AsyncWiFiManager::handleRoot(AsyncWebServerRequest *request) {
 	response->print("<h1>");
 	response->print(_ap_ssid);
 	response->print("</h1>");
-	response->print(F("<h3>AsyncWiFiManager</h3>"));
 	response->print(FPSTR(HTTP_PORTAL_OPTIONS));
 	response->print(_customOptionsHTML);
 	response->print(FPSTR(HTTP_END));
@@ -702,14 +756,18 @@ static String oneString("1");
 void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 	DEBUG_WM(F("Handle wifi"));
 
-	String useStatic = request->arg("static");
-	_loop_scan = request->hasParam("scan");
+	String useStatic = request->arg("static") == oneString ? oneString : String("0");
+
+	_claim();
+	if (request->hasParam("scan")) {
+		_loop_scan = true;
+	}
+	bool scanning = _loop_scan;	// The list is only worth showing once it's finished
+	_release();
 	
 	AsyncResponseStream *response = request->beginResponseStream("text/html");
 
-	if (_loop_scan) {
-		_release();
-
+	if (scanning) {
 		response->print(_wifiHead);
 		response->print(FPSTR(HTTP_STYLE));
 		response->print(_customHeadHTML);
@@ -724,8 +782,6 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 		return;
 	}
 
-	_release();
-
 	response->print(_wifiHead);
 	response->print(FPSTR(HTTP_SCRIPT));
 	response->print(FPSTR(HTTP_STYLE));
@@ -737,7 +793,7 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 	response->print("<br/>");
 
 	response->print(FPSTR(HTTP_FORM_START));
-	char parLength[2];
+	char parLength[4];
 	// add the extra parameters to the form
 	for (int i = 0; i < _paramsCount; i++) {
 		if (_params[i] == NULL) {
@@ -749,9 +805,9 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 			pitem.replace("{i}", _params[i]->getID());
 			pitem.replace("{n}", _params[i]->getID());
 			pitem.replace("{p}", _params[i]->getPlaceholder());
-			snprintf(parLength, 2, "%d", _params[i]->getValueLength());
+			snprintf(parLength, sizeof(parLength), "%d", _params[i]->getValueLength());
 			pitem.replace("{l}", parLength);
-			pitem.replace("{v}", _params[i]->getValue());
+			pitem.replace("{v}", htmlEscape(_params[i]->getValue()));
 			pitem.replace("{c}", _params[i]->getCustomHTML());
 		} else {
 			pitem = _params[i]->getCustomHTML();
@@ -771,6 +827,7 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 		item.replace("{p}", "Static IP");
 		item.replace("{l}", "15");
 		item.replace("{v}", _sta_static_ip.toString());
+		item.replace("{c}", "");
 
 		response->print(item);
 
@@ -780,6 +837,7 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 		item.replace("{p}", "Static Gateway");
 		item.replace("{l}", "15");
 		item.replace("{v}", _sta_static_gw.toString());
+		item.replace("{c}", "");
 
 		response->print(item);
 
@@ -789,6 +847,7 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 		item.replace("{p}", "Subnet");
 		item.replace("{l}", "15");
 		item.replace("{v}", _sta_static_sn.toString());
+		item.replace("{c}", "");
 
 		response->print(item);
 
@@ -798,6 +857,7 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 		item.replace("{p}", "DNS1");
 		item.replace("{l}", "15");
 		item.replace("{v}", _sta_static_dns1.toString());
+		item.replace("{c}", "");
 
 		response->print(item);
 
@@ -807,6 +867,7 @@ void AsyncWiFiManager::handleWifi(AsyncWebServerRequest *request) {
 		item.replace("{p}", "DNS2");
 		item.replace("{l}", "15");
 		item.replace("{v}", _sta_static_dns2.toString());
+		item.replace("{c}", "");
 
 		response->print(item);
 
@@ -840,6 +901,14 @@ void AsyncWiFiManager::setAPCredentials(const char *ssid, const char *pass) {
 void AsyncWiFiManager::handleWifiSave(AsyncWebServerRequest *request) {
 	DEBUG_WM(F("WiFi save"));
 
+	if (_saveformcallback != NULL) {
+		_saveformcallback(request);
+	}
+
+	_claim();
+	_lastDisconnectReason = 0;	// Whatever went wrong before, it's about to try something new
+	_release();
+
 	//SAVE/connect here
 	_refresh_info = true;
 	_router_ssid = request->arg("s").c_str();
@@ -853,7 +922,7 @@ void AsyncWiFiManager::handleWifiSave(AsyncWebServerRequest *request) {
 		//read parameter
 		String value = request->arg(_params[i]->getID()).c_str();
 		//store it in array
-		value.toCharArray(_params[i]->_value, _params[i]->_length);
+		value.toCharArray(_params[i]->_value, _params[i]->_length + 1);
 		DEBUG_WM(F("Parameter"));
 		DEBUG_WM(_params[i]->getID());
 		DEBUG_WM(value);
@@ -897,7 +966,7 @@ void AsyncWiFiManager::handleWifiSave(AsyncWebServerRequest *request) {
 	response->print(FPSTR(HTTP_SCRIPT));
 	response->print(FPSTR(HTTP_STYLE));
 	response->print(_customHeadHTML);
-	response->print(F("<meta http-equiv=\"refresh\" content=\"15; url=/i\">"));
+	response->print(F("<meta http-equiv=\"refresh\" content=\"8; url=/i\">"));
 	response->print(FPSTR(HTTP_HEAD_END));
 	response->print(FPSTR(HTTP_SAVED));
 	response->print(FPSTR(HTTP_END));
@@ -918,22 +987,16 @@ void AsyncWiFiManager::sendInfo(AsyncResponseStream *response) {
   response->print(getESP32ChipID());
 #endif
 	response->print(F("</dd>"));
+#if defined(ESP8266)
 	response->print(F("<dt>Flash Chip ID</dt><dd>"));
-#if defined(ESP8266)
 	response->print(ESP.getFlashChipId());
-#else
-  response->print(F("N/A for ESP32"));
-#endif
 	response->print(F("</dd>"));
-	response->print(F("<dt>IDE Flash Size</dt><dd>"));
-	response->print(ESP.getFlashChipSize());
-	response->print(F(" bytes</dd>"));
 	response->print(F("<dt>Real Flash Size</dt><dd>"));
-#if defined(ESP8266)
 	response->print(ESP.getFlashChipRealSize());
-#else
-  response->print(F("N/A for ESP32"));
+	response->print(F(" bytes</dd>"));
 #endif
+	response->print(F("<dt>Flash Size</dt><dd>"));
+	response->print(ESP.getFlashChipSize());
 	response->print(F(" bytes</dd>"));
 	response->print(F("<dt>Soft AP IP</dt><dd>"));
 	response->print(WiFi.softAPIP().toString());
@@ -949,11 +1012,11 @@ void AsyncWiFiManager::sendInfo(AsyncResponseStream *response) {
 #else
   wifi_config_t conf_current;
   esp_wifi_get_config(WIFI_IF_AP, &conf_current);
-  response->print(String(reinterpret_cast<char*>(conf_current.ap.ssid)));
+  response->print(htmlEscape(String(reinterpret_cast<char*>(conf_current.ap.ssid))));
 #endif
 	response->print(F("</dd>"));
 	response->print(F("<dt>Network SSID</dt><dd>"));
-	response->print(WiFi.SSID());
+	response->print(htmlEscape(WiFi.SSID()));
 	response->print(F("</dd>"));
 	response->print(F("<dt>Station IP</dt><dd>"));
 	response->print(WiFi.localIP().toString());
@@ -969,20 +1032,38 @@ void AsyncWiFiManager::handleInfo(AsyncWebServerRequest *request) {
 
 	AsyncResponseStream *response = request->beginResponseStream("text/html");
 
+	bool connected = WiFi.isConnected();
+	String network = htmlEscape(_savedSSID());
+	const char *problem = connectProblem();
+
 	response->print(_infoHead);
 	response->print(FPSTR(HTTP_SCRIPT));
 	response->print(FPSTR(HTTP_STYLE));
 	response->print(_customHeadHTML);
-	if (_connect == true) {
-		response->print(F("<meta http-equiv=\"refresh\" content=\"5; url=/i\">"));
+	if (!connected && network.length() > 0) {
+		response->print(F("<meta http-equiv=\"refresh\" content=\"5; url=/i\">"));	// Until there's good news
 	}
 	response->print(FPSTR(HTTP_HEAD_END));
-	response->print(F("<dl>"));
-	if (_connect == true) {
-		response->print(F("<dt>Trying to connect</dt><dd>"));
-		response->print(WiFi.status());
-		response->print(F("</dd>"));
+	response->print(F("<dl><dt>WiFi</dt><dd>"));
+	if (connected) {
+		response->print(F("Connected to "));
+		response->print(htmlEscape(WiFi.SSID()));
+		response->print(F(" at "));
+		response->print(WiFi.localIP().toString());
+	} else if (network.length() == 0) {
+		response->print(F("No network chosen"));
+	} else if (problem != NULL) {
+		response->print(F("Can't join "));
+		response->print(network);
+		response->print(F(": "));
+		response->print(problem);
+		response->print(F("<br>It keeps trying."));
+	} else {
+		response->print(F("Connecting to "));
+		response->print(network);
+		response->print(F("..."));
 	}
+	response->print(F("</dd>"));
 
 	sendInfo(response);
 
@@ -1004,7 +1085,7 @@ void AsyncWiFiManager::handleReset(AsyncWebServerRequest *request) {
 	response->print(FPSTR(HTTP_STYLE));
 	response->print(_customHeadHTML);
 	response->print(FPSTR(HTTP_HEAD_END));
-	response->print(F("Module will reset in a few seconds."));
+	response->print(F("The device will restart in a few seconds."));
 	response->print(FPSTR(HTTP_END));
 
 	request->send(response);
@@ -1095,6 +1176,34 @@ void AsyncWiFiManager::setSaveConfigCallback(void (*func)(void)) {
 	_savecallback = func;
 }
 
+void AsyncWiFiManager::setSaveFormCallback(void (*func)(AsyncWebServerRequest*)) {
+	_saveformcallback = func;
+}
+
+// The network it's been told to join, whether it has joined it or not
+String AsyncWiFiManager::_savedSSID() {
+	if (_router_ssid.length() > 0) {
+		return _router_ssid;
+	}
+#ifdef ESP32
+	wifi_config_t conf;
+	char name[sizeof(conf.sta.ssid) + 1] = "";
+	if (esp_wifi_get_config((wifi_interface_t)ESP_IF_WIFI_STA, &conf) == ESP_OK) {
+		strncpy(name, reinterpret_cast<char*>(conf.sta.ssid), sizeof(conf.sta.ssid));	// Not ended if it's the longest there is
+	}
+	return String(name);
+#else
+	return WiFi.SSID();
+#endif
+}
+
+// The ESP8266 and ESP32 number these the same, but name them differently
+#ifdef ESP8266
+#define DISCONNECT_REASON(name) WIFI_DISCONNECT_REASON_##name
+#else
+#define DISCONNECT_REASON(name) WIFI_REASON_##name
+#endif
+
 #ifdef ESP8266
 void AsyncWiFiManager::onStationIP(const WiFiEventStationModeGotIP& evt) {
 	_claim();
@@ -1107,6 +1216,7 @@ void AsyncWiFiManager::onConnected(const WiFiEventStationModeConnected& evt) {
 	DEBUG_WM(F("Connected"));
 	_claim();
 	_connectRetryTimeout = 0;
+	_lastDisconnectReason = 0;
 	_release();
 }
 
@@ -1115,6 +1225,9 @@ void AsyncWiFiManager::onDisconnected(const WiFiEventStationModeDisconnected& ev
 	_claim();
 	_lastConnectTime = millis();
 	_connectRetryTimeout = 10000;	// ms
+	if (evt.reason != DISCONNECT_REASON(ASSOC_LEAVE)) {	// That's this library giving up on a try
+		_lastDisconnectReason = evt.reason;
+	}
 	_release();
 }
 #else
@@ -1129,17 +1242,42 @@ void AsyncWiFiManager::onConnected(WiFiEvent_t event, WiFiEventInfo_t info) {
 	DEBUG_WM(F("Connected"));
 	_claim();
 	_connectRetryTimeout = 0;
+	_lastDisconnectReason = 0;
 	_release();
 }
 
 void AsyncWiFiManager::onDisconnected(WiFiEvent_t event, WiFiEventInfo_t info) {
 	DEBUG_WM(F("Disconnected"));
+#if ESP_ARDUINO_VERSION_MAJOR >= 2
+	uint8_t reason = info.wifi_sta_disconnected.reason;
+#else
+	uint8_t reason = info.disconnected.reason;
+#endif
 	_claim();
 	_lastConnectTime = millis();
 	_connectRetryTimeout = 10000;	// ms
+	if (reason != DISCONNECT_REASON(ASSOC_LEAVE)) {	// That's this library giving up on a try
+		_lastDisconnectReason = reason;
+	}
 	_release();
 }
 #endif
+
+const char* AsyncWiFiManager::connectProblem() {
+	switch (_lastDisconnectReason) {
+		case 0:
+			return NULL;
+		case DISCONNECT_REASON(NO_AP_FOUND):
+			return "Network not found";
+		case DISCONNECT_REASON(AUTH_FAIL):
+		case DISCONNECT_REASON(MIC_FAILURE):
+		case DISCONNECT_REASON(4WAY_HANDSHAKE_TIMEOUT):
+		case DISCONNECT_REASON(HANDSHAKE_TIMEOUT):
+			return "Wrong password?";
+		default:
+			return "Can't connect";
+	}
+}
 
 //start up connected callback
 void AsyncWiFiManager::setConnectedCallback(void (*func)(void)) {
