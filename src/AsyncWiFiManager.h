@@ -163,7 +163,7 @@ private:
 	wl_status_t _connectWiFi();
 	void _scanNetworks();
 	String _savedSSID();
-	bool _start();
+	bool _start(bool connect);
 	void _claim();
 	void _release();
 	void _cacheHeads();
@@ -182,6 +182,8 @@ private:
     unsigned long _lastLoopTime = 0;
 
     bool _connect = false;			// Config Portal requested connection
+	bool _restart = false;			// Reset asked for at _restartTime
+	unsigned long _restartTime = 0;
 	bool _isAP = false;				// True if AP is enabled
 	int _loop_ap_state = -1;
 	bool _loop_scan = false;
@@ -279,9 +281,9 @@ private:
 #endif
 
 	int _paramsCount = 0;
-	AsyncWiFiManagerParameter *_params[WIFI_MANAGER_MAX_PARAMS];
+	AsyncWiFiManagerParameter *_params[WIFI_MANAGER_MAX_PARAMS] = {};
 
-	template<typename Generic> void DEBUG_WM(Generic text);
+	template<typename Generic> void _debugPrint(Generic text);
 
 	template<class T>
 	auto optionalIPFromString(T *obj, const char *s) ->
@@ -289,8 +291,9 @@ private:
 		return obj->fromString(s);
 	}
 	auto optionalIPFromString(...) -> bool {
-		DEBUG_WM(
-				"NO fromString METHOD ON IPAddress, you need ESP8266 core 2.1.0 or newer for Custom IP configuration to work.");
+		if (_debug) {
+			_debugPrint("NO fromString METHOD ON IPAddress, you need ESP8266 core 2.1.0 or newer for Custom IP configuration to work.");
+		}
 		return false;
 	}
 };
