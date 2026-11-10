@@ -143,6 +143,33 @@ namespace {
 	};
 }
 
+// The portal's pages, all in one handler rather than one handler each. It only answers while the
+// portal is set up. ESPAsyncWebServer 3 made canHandle() and isRequestHandlerTrivial() const, so
+// there's one of each to suit either version.
+class AsyncWiFiManager::PortalHandler : public AsyncWebHandler {
+public:
+	explicit PortalHandler(AsyncWiFiManager *manager) : _manager(manager) {}
+
+	bool canHandle(AsyncWebServerRequest *request) {
+		uint8_t page = _manager->_portalPage(request);
+#ifndef ASYNCWEBSERVER_VERSION_MAJOR
+		// Older servers drop the headers no handler asked for. The form's callback is given the request.
+		if (page == SAVED_PAGE) {
+			request->addInterestingHeader("ANY");
+		}
+#endif
+		return page != NO_PAGE;
+	}
+	bool canHandle(AsyncWebServerRequest *request) const { return _manager->_portalPage(request) != NO_PAGE; }
+	void handleRequest(AsyncWebServerRequest *request) { _manager->_handlePortal(request); }
+	// Not trivial, so a POST's form is read
+	bool isRequestHandlerTrivial() { return false; }
+	bool isRequestHandlerTrivial() const { return false; }
+
+private:
+	AsyncWiFiManager *_manager;
+};
+
 AsyncWiFiManagerParameter::AsyncWiFiManagerParameter(const char *custom) {
 	_id = NULL;
 	_placeholder = NULL;
@@ -204,6 +231,12 @@ AsyncWiFiManager::AsyncWiFiManager(AsyncWebServer *server, DNSServer *dns) : ser
 #endif
 }
 #endif
+
+AsyncWiFiManager::~AsyncWiFiManager() {
+	if (_portalHandler != NULL) {
+		server->removeHandler(_portalHandler);
+	}
+}
 
 void AsyncWiFiManager::setHostname(const char* hostname) {
 #if ARDUINO_ESP8266_MAJOR < 3
@@ -454,13 +487,11 @@ void AsyncWiFiManager::_setupConfigPortal() {
 
 	if (!_portalSet) {
 		_portalSet = true;
-		/* Setup web pages: root, wifi config pages, SO captive portal detectors and not found. */
-		rootApHandler = &server->on("/", [this](AsyncWebServerRequest *req){ this->handleRoot(req); }).setFilter(ON_AP_FILTER);
-        wifiApHandler = &server->on("/wifi", HTTP_GET, [this](AsyncWebServerRequest *req){ this->handleWifi(req); }).setFilter(ON_AP_FILTER);
-        wifiSaveApHandler = &server->on("/wifisave", HTTP_POST, [this](AsyncWebServerRequest *req){ this->handleWifiSave(req); }).setFilter(ON_AP_FILTER);
-        iApHandler = &server->on("/i", [this](AsyncWebServerRequest *req){ this->handleInfo(req); }).setFilter(ON_AP_FILTER);
-        rApHandler = &server->on("/r", HTTP_POST, [this](AsyncWebServerRequest *req){ this->handleReset(req); }).setFilter(ON_AP_FILTER);
-        fwLinkApHandler = &server->on("/fwlink", [this](AsyncWebServerRequest *req){ this->handleRoot(req); }).setFilter(ON_AP_FILTER);
+		if (_portalHandler == NULL) {
+			// Kept from then on, as removing it could free it while the server is using it on another
+			// task. So a program shouldn't call server->reset() after this.
+			_portalHandler = &server->addHandler(new PortalHandler(this));
+		}
         server->onNotFound([this](AsyncWebServerRequest *req){ this->handleNotFound(req); });
 		server->begin(); // Web server start
 	}
@@ -865,22 +896,15 @@ void AsyncWiFiManager::_stopConfigPortal() {
 		}
 	}
 
+	// The portal's handler stays, and stops answering
+	_portalSet = false;
+
 	std::shared_ptr<const char> networks;
 	_claim();
 	_networks.swap(networks);
 	_scanFailed = false;
 	_release();
 	// The list goes here, unless a page being sent still has it
-
-	if (_portalSet){
-		_portalSet = false;
-		server->removeHandler(rootApHandler);
-		server->removeHandler(wifiApHandler);
-		server->removeHandler(wifiSaveApHandler);
-		server->removeHandler(iApHandler);
-		server->removeHandler(rApHandler);
-		server->removeHandler(fwLinkApHandler);
-	}
 }
 
 void AsyncWiFiManager::setDebugOutput(bool debug) {
@@ -903,6 +927,38 @@ void AsyncWiFiManager::setSTAStaticIPConfig(IPAddress ip, IPAddress gw, IPAddres
 
 void AsyncWiFiManager::setMinimumSignalQuality(int quality) {
 	_minimumQuality = quality;
+}
+
+// Which of the portal's pages a request is for, if any
+uint8_t AsyncWiFiManager::_portalPage(AsyncWebServerRequest *request) {
+	if (!_portalSet || !ON_AP_FILTER(request)) {
+		return NO_PAGE;
+	}
+
+	const String &url = request->url();
+	if (url == "/" || url == "/fwlink") {
+		return ROOT_PAGE;
+	} else if (url == "/i") {
+		return INFO_PAGE;
+	} else if (url == "/wifi") {
+		return request->method() == HTTP_GET ? WIFI_PAGE : NO_PAGE;
+	} else if (url == "/wifisave") {
+		return request->method() == HTTP_POST ? SAVED_PAGE : NO_PAGE;
+	} else if (url == "/r") {
+		return request->method() == HTTP_POST ? RESET_PAGE : NO_PAGE;	// So a link can't restart it
+	}
+	return NO_PAGE;
+}
+
+void AsyncWiFiManager::_handlePortal(AsyncWebServerRequest *request) {
+	switch (_portalPage(request)) {
+		case ROOT_PAGE: handleRoot(request); break;
+		case WIFI_PAGE: handleWifi(request); break;
+		case SAVED_PAGE: handleWifiSave(request); break;
+		case INFO_PAGE: handleInfo(request); break;
+		case RESET_PAGE: handleReset(request); break;
+		default: handleNotFound(request); break;	// The portal closed as the request came in
+	}
 }
 
 // Sends a page as it's printed rather than printing it into memory first, which took twice the

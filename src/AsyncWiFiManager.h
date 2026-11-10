@@ -100,7 +100,7 @@ public:
 	// dns isn't used on ESP32, which answers DNS queries itself. It's kept so existing sketches build.
 	AsyncWiFiManager(AsyncWebServer * server, DNSServer *dns);
 #endif
-	~AsyncWiFiManager() {}
+	~AsyncWiFiManager();
 
 	void loop();
 	bool start();
@@ -141,6 +141,8 @@ public:
 	void dumpInfo();
 
 private:
+	class PortalHandler;
+
 	// What a page shows that could change while it's being sent. It's sent in parts, see _sendPage().
 	struct Page {
 		uint8_t kind;
@@ -195,14 +197,9 @@ private:
 	String _ap_ssid;
 	String _ap_pass;
 
-	bool   _portalSet = false;		// Enforce single initialization of ConfigPortal
+	bool   _portalSet = false;		// True while the portal's pages are served
 
-	AsyncWebHandler* rootApHandler;
-	AsyncWebHandler* wifiApHandler;
-	AsyncWebHandler* wifiSaveApHandler;
-	AsyncWebHandler* iApHandler;
-	AsyncWebHandler* rApHandler;
-	AsyncWebHandler* fwLinkApHandler;
+	AsyncWebHandler *_portalHandler = NULL;	// Added the first time the portal is set up, then kept
 	String _customHeadHTML;					// Read with the lock held
 	String _customOptionsHTML;
 
@@ -215,6 +212,8 @@ private:
 	IPAddress _sta_static_dns1= (uint32_t)0x00000000;
 	IPAddress _sta_static_dns2= (uint32_t)0x00000000;
 
+	uint8_t _portalPage(AsyncWebServerRequest*);
+	void _handlePortal(AsyncWebServerRequest*);
 	void _sendPage(AsyncWebServerRequest*, const Page&);
 	void _printPage(Print&, const Page&);
 	void _printHead(Print&, const char *title, bool script);
