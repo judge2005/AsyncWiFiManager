@@ -92,20 +92,6 @@ private:
 	friend class AsyncWiFiManager;
 };
 
-class WiFiResult {
-public:
-	bool duplicate;
-	String SSID;
-	uint8_t encryptionType;
-	int32_t RSSI;
-	uint8_t *BSSID;
-	int32_t channel;
-	bool isHidden;
-
-	WiFiResult() {
-	}
-};
-
 class AsyncWiFiManager {
 public:
 #ifdef USE_EADNS
@@ -250,18 +236,17 @@ private:
 	// DNS server
 	const byte DNS_PORT = 53;
 
-	// Scanned WiFi access point SSIDs
-	WiFiResult *wifiSSIDs = 0;
-	wifi_ssid_count_t wifiSSIDCount = 0;
+	// The last scan's networks, see _listNetworks()
+	std::shared_ptr<const char> _networks;
 	bool _removeDuplicateAPs = true;
 	int  _minimumQuality     = -1;
-	bool shouldscan          = false;
 
 	void          sendNetworkList(AsyncResponseStream *response);
 	static int    getRSSIasQuality(int RSSI);
 	static bool   isIp(String str);
 	static String toStringIp(IPAddress ip);
-	void          copySSIDInfo(wifi_ssid_count_t n);
+	void          _saveScan(wifi_ssid_count_t n);
+	std::shared_ptr<const char> _listNetworks(wifi_ssid_count_t n);
 
 	void (*_apcallback)(AsyncWiFiManager*) = NULL;	// Call when AP mode state changes
 

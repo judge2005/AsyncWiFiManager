@@ -32,6 +32,10 @@ static const unsigned long BUSY_AP_RETRY_MS = 60000;
 // Time for the Reset page to be sent before restarting
 static const unsigned long RESTART_DELAY_MS = 2000;
 
+// In the scan list: the first byte of a network with a password has this set, and this byte ends the list
+static const uint8_t LOCKED_NETWORK = 0x80;
+static const char NETWORKS_END = (char)0xFF;
+
 // Puts text in a page as itself rather than as HTML. Network names can have anything in them.
 static String htmlEscape(const String &text) {
 	String escaped;
@@ -101,7 +105,6 @@ const char* AsyncWiFiManagerParameter::getCustomHTML() {
 #ifdef USE_EADNS
 AsyncWiFiManager::AsyncWiFiManager(AsyncWebServer *server, AsyncDNSServer *dns) : server(server), dnsServer(dns) {
 	_cacheHeads();
-	wifiSSIDs = NULL;
 #ifdef ESP32
 	loopMutex = xSemaphoreCreateMutex();
 #endif
@@ -109,7 +112,6 @@ AsyncWiFiManager::AsyncWiFiManager(AsyncWebServer *server, AsyncDNSServer *dns) 
 #else
 AsyncWiFiManager::AsyncWiFiManager(AsyncWebServer *server, DNSServer *dns) : server(server), dnsServer(dns) {
 	_cacheHeads();
-	wifiSSIDs = NULL;
 #ifdef ESP32
 	loopMutex = xSemaphoreCreateMutex();
 #endif
@@ -647,45 +649,102 @@ void AsyncWiFiManager::loop() {
 }
 
 void AsyncWiFiManager::sendNetworkList(AsyncResponseStream *response) {
-	String pager;
-#ifdef ESP32
 	_claim();	// A scan on another task replaces the list
-#endif
+	std::shared_ptr<const char> networks = _networks;
+	bool failed = _scanFailed;
+	_release();
+
 	//display networks in page
-	if (_scanFailed) {
+	if (failed) {
 		response->print(F("<p>The scan failed, so this list may be out of date. Try again.</p>"));
 	}
-	for (int i = 0; i < wifiSSIDCount; i++) {
-		if (wifiSSIDs[i].duplicate == true) {
-			continue; // skip dups
-		}
 
-		int quality = getRSSIasQuality(wifiSSIDs[i].RSSI);
-
-		if (_minimumQuality == -1 || _minimumQuality < quality) {
-			char locked = ' ';
-#if defined(ESP8266)
-			if (wifiSSIDs[i].encryptionType != ENC_TYPE_NONE) {
-#else
-            if (wifiSSIDs[i].encryptionType != WIFI_AUTH_OPEN) {
-#endif
-				locked = 'l';
-			}
-			response->printf(HTTP_ITEM, htmlEscape(wifiSSIDs[i].SSID).c_str(), locked, quality);
-		} else {
-			DEBUG_WM(F("Skipping due to quality"));
-		}
-	}
-
-	if (wifiSSIDCount == 0) {
+	const char *network = networks.get();
+	if (network == NULL || *network == NETWORKS_END) {
 		response->print(F("No networks found"));
+		return;
 	}
-#ifdef ESP32
-	_release();
-#endif
+
+	while (*network != NETWORKS_END) {
+		uint8_t about = *network++;
+		response->print(F("<div><a href='#p' onclick='c(this)'>"));
+		response->print(htmlEscape(network));
+		response->print(about & LOCKED_NETWORK ? F("</a>&nbsp;<span class='q l'>") : F("</a>&nbsp;<span class='q'>"));
+		response->print(about & ~LOCKED_NETWORK);
+		response->print(F("%</span></div>"));
+		network += strlen(network) + 1;
+	}
 }
 
-void AsyncWiFiManager::copySSIDInfo(wifi_ssid_count_t n) {
+// The scan's networks, as the Wi-Fi page lists them: strongest first, leaving out hidden ones, weak
+// ones if there's a minimum quality, and repeats of a name if duplicates are removed. For each, a
+// byte with its quality, and LOCKED_NETWORK if it has a password, then its name, ended. NETWORKS_END
+// ends the list. It's one block, rather than a String for each, and made once. A page being made
+// holds on to it, so a scan can replace it meanwhile.
+std::shared_ptr<const char> AsyncWiFiManager::_listNetworks(wifi_ssid_count_t n) {
+	// The order to list them in. Insertion sort, as there aren't many.
+	std::unique_ptr<uint16_t[]> order(new (std::nothrow) uint16_t[n]);
+	if (!order) {
+		return nullptr;
+	}
+	size_t size = 1;	// NETWORKS_END
+	for (wifi_ssid_count_t i = 0; i < n; i++) {
+		int32_t rssi = WiFi.RSSI(i);
+		wifi_ssid_count_t j = i;
+		for (; j > 0 && WiFi.RSSI(order[j - 1]) < rssi; j--) {
+			order[j] = order[j - 1];
+		}
+		order[j] = i;
+		size += WiFi.SSID(i).length() + 2;
+	}
+
+	char *list = (char *)malloc(size);
+	if (list == NULL) {
+		return nullptr;
+	}
+	char *end = list;
+	for (wifi_ssid_count_t i = 0; i < n; i++) {
+		uint16_t network = order[i];
+		String name = WiFi.SSID(network);
+		int quality = getRSSIasQuality(WiFi.RSSI(network));
+		if (name.length() == 0) {
+			continue;	// Hidden, so it can't be picked from the list
+		}
+		if (_minimumQuality != -1 && quality <= _minimumQuality) {
+			DEBUG_WM(F("Skipping due to quality"));
+			continue;
+		}
+		if (_removeDuplicateAPs) {
+			bool listed = false;
+			for (const char *other = list; other < end && !listed; other += strlen(other + 1) + 2) {
+				listed = strcmp(other + 1, name.c_str()) == 0;
+			}
+			if (listed) {
+				DEBUG_WM(F("DUP AP:"));
+				DEBUG_WM(name);
+				continue;
+			}
+		}
+#if defined(ESP8266)
+		bool locked = WiFi.encryptionType(network) != ENC_TYPE_NONE;
+#else
+		bool locked = WiFi.encryptionType(network) != WIFI_AUTH_OPEN;
+#endif
+		*end++ = quality | (locked ? LOCKED_NETWORK : 0);
+		memcpy(end, name.c_str(), name.length() + 1);
+		end += name.length() + 1;
+	}
+	*end++ = NETWORKS_END;
+
+	// Gives back what was left out
+	char *shrunk = (char *)realloc(list, end - list);
+	if (shrunk != NULL) {
+		list = shrunk;
+	}
+	return std::shared_ptr<const char>(list, [](const char *p) { free((void *)p); });
+}
+
+void AsyncWiFiManager::_saveScan(wifi_ssid_count_t n) {
 	if (n == WIFI_SCAN_FAILED) {
 		DEBUG_WM(F("scanNetworks returned: WIFI_SCAN_FAILED!"));
 	} else if (n == WIFI_SCAN_RUNNING) {
@@ -694,75 +753,30 @@ void AsyncWiFiManager::copySSIDInfo(wifi_ssid_count_t n) {
 		DEBUG_WM(F("scanNetworks failed with unknown error code!"));
 	} else if (n == 0) {
 		DEBUG_WM(F("No networks found"));
-		// page += F("No networks found. Refresh to scan again.");
 	} else {
 		DEBUG_WM(F("Found SSIDs:"));
 		DEBUG_WM(n);
 	}
 
 	// Made on the side and then swapped in, since a web page could be reading the list
-	WiFiResult *networks = NULL;
+	std::shared_ptr<const char> networks;
 	bool failed = n < 0;
-
 	if (n > 0) {
-		networks = new (std::nothrow) WiFiResult[n];
-		failed = networks == NULL;
-	}
-
-	if (networks != NULL) {
-		for (wifi_ssid_count_t i = 0; i < n; i++) {
-			networks[i].duplicate = false;
-
-#if defined(ESP8266)
-			bool res = WiFi.getNetworkInfo(i, networks[i].SSID, networks[i].encryptionType, networks[i].RSSI, networks[i].BSSID, networks[i].channel, networks[i].isHidden);
-#else
-            bool res = WiFi.getNetworkInfo(i, networks[i].SSID, networks[i].encryptionType, networks[i].RSSI, networks[i].BSSID, networks[i].channel);
-#endif
-		}
-
-		// RSSI SORT
-
-		// old sort
-		for (int i = 0; i < n; i++) {
-			for (int j = i + 1; j < n; j++) {
-				if (networks[j].RSSI > networks[i].RSSI) {
-					std::swap(networks[i], networks[j]);
-				}
-			}
-		}
-
-		// remove duplicates ( must be RSSI sorted )
-		if (_removeDuplicateAPs) {
-			String cssid;
-			for (int i = 0; i < n; i++) {
-				if (networks[i].duplicate == true)
-					continue;
-				cssid = networks[i].SSID;
-				for (int j = i + 1; j < n; j++) {
-					if (cssid == networks[j].SSID) {
-						DEBUG_WM(F("DUP AP:"));
-						DEBUG_WM(networks[j].SSID);
-						networks[j].duplicate = true; // set dup aps to NULL
-					}
-				}
-			}
-		}
+		networks = _listNetworks(n);
+		failed = !networks;
 	}
 
 	if (n >= 0) {
 		WiFi.scanDelete();
 	}
 
-	WiFiResult *old = NULL;
 	_claim();
 	_scanFailed = failed;
 	if (!failed) {
-		old = wifiSSIDs;
-		wifiSSIDs = networks;
-		wifiSSIDCount = n;
+		_networks.swap(networks);
 	}
 	_release();
-	delete[] old;
+	// The old list goes here, unless a page being sent still has it
 }
 
 void AsyncWiFiManager::startConfigPortal() {
@@ -790,7 +804,7 @@ void AsyncWiFiManager::_scanNetworks() {
 	}
 #endif
 	wifi_ssid_count_t n = WiFi.scanNetworks(false);
-	copySSIDInfo(n);
+	_saveScan(n);
 }
 
 bool AsyncWiFiManager::_startConfigPortal() {
@@ -837,13 +851,12 @@ void AsyncWiFiManager::_stopConfigPortal() {
 		}
 	}
 
+	std::shared_ptr<const char> networks;
 	_claim();
-	WiFiResult *networks = wifiSSIDs;
-	wifiSSIDs = NULL;
-	wifiSSIDCount = 0;
+	_networks.swap(networks);
 	_scanFailed = false;
 	_release();
-	delete[] networks;
+	// The list goes here, unless a page being sent still has it
 
 	if (_portalSet){
 		_portalSet = false;
