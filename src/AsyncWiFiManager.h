@@ -55,7 +55,7 @@ const char HTTP_FORM_START[] PROGMEM
 const char HTTP_FORM_PARAM[] PROGMEM
 		= "<br/><label for='{i}'>{p}</label><input id='{i}' name='{n}' maxlength={l} value='{v}' {c}>";
 const char HTTP_FORM_END[] PROGMEM
-		= "<br/><button type='submit'>save</button></form>";
+		= "<br/><button type='submit'>Save</button></form>";
 const char HTTP_SCAN_LINK[] PROGMEM
 		= "<br/><div class=\"c\"><a href=\"/wifi?static={s}&scan=1\"><button>Scan</button></a></div>";
 const char HTTP_SCAN_REFRESH[] PROGMEM
