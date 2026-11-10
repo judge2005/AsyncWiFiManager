@@ -101,6 +101,8 @@ public:
 	AsyncWiFiManager(AsyncWebServer * server, DNSServer *dns);
 #endif
 	~AsyncWiFiManager();
+	AsyncWiFiManager(const AsyncWiFiManager&) = delete;
+	AsyncWiFiManager& operator=(const AsyncWiFiManager&) = delete;
 
 	void loop();
 	bool start();
@@ -109,6 +111,7 @@ public:
 	void setHostname(const char* hostname);
 	void setDebugOutput(bool debug);
 	void setRemoveDuplicateAPs(bool flag);
+	// Text in flash, such as a string literal, is used where it is on an ESP32. Anything else is copied.
 	void setCustomOptionsHTML(const char* html);
 	void setCustomHeadHTML(const char* html);
 	void addParameter(AsyncWiFiManagerParameter *p);
@@ -200,8 +203,8 @@ private:
 	bool   _portalSet = false;		// True while the portal's pages are served
 
 	AsyncWebHandler *_portalHandler = NULL;	// Added the first time the portal is set up, then kept
-	String _customHeadHTML;					// Read with the lock held
-	String _customOptionsHTML;
+	const char *_customHeadHTML = NULL;		// Either in flash or a copy, see keepText(). Read with the lock held.
+	const char *_customOptionsHTML = NULL;
 
 	IPAddress _ap_static_ip;
 	IPAddress _ap_static_gw;

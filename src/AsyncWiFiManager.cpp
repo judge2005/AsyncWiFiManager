@@ -14,6 +14,11 @@
 #include "AsyncWiFiManager.h"
 #if !defined(ESP8266)
 #include <esp_wifi.h>
+#if __has_include("esp_memory_utils.h")
+#include "esp_memory_utils.h"		// ESP-IDF 5
+#else
+#include "soc/soc_memory_layout.h"	// ESP-IDF 4
+#endif
 #else
 #include <core_version.h>
 #endif
@@ -41,6 +46,41 @@ enum : uint8_t { NO_PAGE, ROOT_PAGE, WIFI_PAGE, SCANNING_PAGE, SAVED_PAGE, INFO_
 // In the scan list: the first byte of a network with a password has this set, and this byte ends the list
 static const uint8_t LOCKED_NETWORK = 0x80;
 static const char NETWORKS_END = (char)0xFF;
+
+// Whether text is in flash, where a string literal is. It can't change or go away, so the portal can
+// use it where it is rather than keep a copy. Some chips map PSRAM where flash could be, so that's
+// ruled out. An ESP8266 keeps literals in RAM, so it always copies.
+static bool inFlash(const char *text) {
+#ifdef ESP8266
+	(void)text;
+	return false;
+#else
+	return esp_ptr_in_drom(text) && !esp_ptr_external_ram(text);
+#endif
+}
+
+// What the portal keeps of text the program gives it, see inFlash(). NULL for none. Read with the _P
+// functions, as an ESP8266 program can pass text in flash.
+static const char *keepText(const char *text) {
+	if (text == NULL || pgm_read_byte(text) == 0) {
+		return NULL;
+	}
+	if (inFlash(text)) {
+		return text;
+	}
+	size_t size = strlen_P(text) + 1;
+	char *copy = (char *)malloc(size);
+	if (copy != NULL) {
+		memcpy_P(copy, text, size);
+	}
+	return copy;
+}
+
+static void forgetText(const char *text) {
+	if (text != NULL && !inFlash(text)) {
+		free((void *)text);
+	}
+}
 
 // Prints text as itself rather than as HTML. Network names can have anything in them.
 static void printEscaped(Print &out, const char *text, size_t length) {
@@ -236,6 +276,8 @@ AsyncWiFiManager::~AsyncWiFiManager() {
 	if (_portalHandler != NULL) {
 		server->removeHandler(_portalHandler);
 	}
+	forgetText(_customHeadHTML);
+	forgetText(_customOptionsHTML);
 }
 
 void AsyncWiFiManager::setHostname(const char* hostname) {
@@ -991,7 +1033,9 @@ void AsyncWiFiManager::_printHead(Print &out, const char *title, bool script) {
 	}
 	out.print(FPSTR(HTTP_STYLE));
 	_claim();	// So it can't be replaced as it's printed
-	out.print(_customHeadHTML);
+	if (_customHeadHTML != NULL) {
+		out.print(_customHeadHTML);
+	}
 	_release();
 }
 
@@ -1007,7 +1051,9 @@ void AsyncWiFiManager::_printPage(Print &out, const Page &page) {
 		out.print(F("</h1>"));
 		out.print(FPSTR(HTTP_PORTAL_OPTIONS));
 		_claim();
-		out.print(_customOptionsHTML);
+		if (_customOptionsHTML != NULL) {
+			out.print(_customOptionsHTML);
+		}
 		_release();
 		break;
 
@@ -1498,16 +1544,20 @@ void AsyncWiFiManager::setConnectedCallback(void (*func)(void)) {
 
 //sets a custom element to add to head, like a new style tag
 void AsyncWiFiManager::setCustomHeadHTML(const char *element) {
+	const char *html = keepText(element);
 	_claim();
-	_customHeadHTML = element;
+	std::swap(html, _customHeadHTML);
 	_release();
+	forgetText(html);	// Pages print it with the lock held, so none is using it
 }
 
 //sets a custom element to add to options page
 void AsyncWiFiManager::setCustomOptionsHTML(const char *element) {
+	const char *html = keepText(element);
 	_claim();
-	_customOptionsHTML = element;
+	std::swap(html, _customOptionsHTML);
 	_release();
+	forgetText(html);	// Pages print it with the lock held, so none is using it
 }
 
 //if this is true, remove duplicated Access Points - defaut true
