@@ -141,6 +141,18 @@ public:
 	void dumpInfo();
 
 private:
+	// What a page shows that could change while it's being sent. It's sent in parts, see _sendPage().
+	struct Page {
+		uint8_t kind;
+		bool useStatic;			// The Wi-Fi page's static address fields
+		bool scanFailed;
+		bool connected;			// The Info page's
+		uint8_t problem;
+		uint32_t ip;
+		char ssid[33];
+		std::shared_ptr<const char> networks;	// See _listNetworks()
+	};
+
 	bool _debug = false;
 
 	void _stopConfigPortal();
@@ -152,7 +164,6 @@ private:
 	bool _start(bool connect);
 	void _claim();
 	void _release();
-	void _cacheHeads();
 
 	AsyncWebServer *server;
 #ifdef USE_EADNS
@@ -192,15 +203,8 @@ private:
 	AsyncWebHandler* iApHandler;
 	AsyncWebHandler* rApHandler;
 	AsyncWebHandler* fwLinkApHandler;
-	
-	bool   _refresh_info = true;	// Refresh the info HTML when true
-	String _customHeadHTML;
+	String _customHeadHTML;					// Read with the lock held
 	String _customOptionsHTML;
-	String _wifiSaveHead;
-	String _wifiHead;
-	String _rootHead;
-	String _infoHead;
-	String _resetHead;
 
 	IPAddress _ap_static_ip;
 	IPAddress _ap_static_gw;
@@ -211,7 +215,12 @@ private:
 	IPAddress _sta_static_dns1= (uint32_t)0x00000000;
 	IPAddress _sta_static_dns2= (uint32_t)0x00000000;
 
-	void sendInfo(AsyncResponseStream *response);
+	void _sendPage(AsyncWebServerRequest*, const Page&);
+	void _printPage(Print&, const Page&);
+	void _printHead(Print&, const char *title, bool script);
+	void _printNetworks(Print&, const Page&);
+	void _printInfo(Print&, const Page&);
+	static const char *_problemText(uint8_t reason);
 
 	void handleRoot(AsyncWebServerRequest*);
 	void handleWifi(AsyncWebServerRequest*);
@@ -219,7 +228,6 @@ private:
 	void handleInfo(AsyncWebServerRequest*);
 	void handleReset(AsyncWebServerRequest*);
 	void handleNotFound(AsyncWebServerRequest*);
-	void handle204(AsyncWebServerRequest*);
 	bool captivePortal(AsyncWebServerRequest*);
 	void dnsStart(bool start);
 #ifdef ESP8266
@@ -233,18 +241,13 @@ private:
 	void onDisconnected(WiFiEvent_t event, WiFiEventInfo_t info);
 #endif
 
-	// DNS server
-	const byte DNS_PORT = 53;
-
 	// The last scan's networks, see _listNetworks()
 	std::shared_ptr<const char> _networks;
 	bool _removeDuplicateAPs = true;
 	int  _minimumQuality     = -1;
 
-	void          sendNetworkList(AsyncResponseStream *response);
 	static int    getRSSIasQuality(int RSSI);
-	static bool   isIp(String str);
-	static String toStringIp(IPAddress ip);
+	static bool   isIp(const String &str);
 	void          _saveScan(wifi_ssid_count_t n);
 	std::shared_ptr<const char> _listNetworks(wifi_ssid_count_t n);
 
