@@ -18,6 +18,10 @@
 #include <core_version.h>
 #endif
 #include <new>
+#ifdef WM_LWIP_DNS
+#include "lwip/udp.h"
+#include "lwip/priv/tcpip_priv.h"
+#endif
 
 // Looking for a network takes the radio away from the access point, so it's done less while someone is on it
 static const unsigned long BUSY_AP_RETRY_MS = 60000;
@@ -139,12 +143,143 @@ void AsyncWiFiManager::addParameter(AsyncWiFiManagerParameter *p) {
 //  DEBUG_WM(p->getID());
 }
 
+#ifdef WM_LWIP_DNS
+// The portal's DNS server, which gives every name the access point's address. That's how a phone or
+// computer that joins finds the portal: it looks up a name of its own and is sent to the portal.
+// DNSServer answers one query each time loop() runs, and lwIP keeps only a few waiting for it, so
+// when lots arrive at once, as they do when a phone joins, most are lost, often including the one
+// the phone checks for a portal with. This answers each query as it arrives, on lwIP's thread.
+namespace {
+	const uint8_t DNS_TTL = 5;	// Seconds
+	const uint16_t DNS_TYPE_A = 1;
+	const uint16_t DNS_TYPE_ANY = 255;
+	const uint16_t DNS_CLASS_IN = 1;
+	const uint16_t DNS_CLASS_ANY = 255;
+	const uint8_t DNS_FORMERR = 1;
+	const uint8_t DNS_NOTIMP = 4;
+
+	uint16_t dnsGet16(struct pbuf *p, uint16_t offset) {
+		return (pbuf_get_at(p, offset) << 8) | pbuf_get_at(p, offset + 1);
+	}
+
+	// An A query gets the access point's address, and any other type an empty answer, rather than an
+	// A record it didn't ask for. Other records in a query, such as EDNS's, are left out of the reply
+	// rather than making it fail.
+	void dnsReceive(void *arg, struct udp_pcb *pcb, struct pbuf *query, const ip_addr_t *addr, u16_t port) {
+		uint16_t length = query->tot_len;
+		if (length < 12 || (pbuf_get_at(query, 2) & 0x80)) {
+			pbuf_free(query);	// Too short, or a reply
+			return;
+		}
+
+		uint8_t rcode = 0;
+		uint16_t questionEnd = 0;	// 0 when the reply has no question
+		bool answer = false;
+
+		if ((pbuf_get_at(query, 2) & 0x78) != 0) {
+			rcode = DNS_NOTIMP;		// Not a standard query
+		} else if (dnsGet16(query, 4) != 1) {
+			rcode = DNS_FORMERR;	// Not one question
+		} else {
+			uint16_t offset = 12;
+			while (offset < length && pbuf_get_at(query, offset) != 0 && pbuf_get_at(query, offset) < 64) {
+				offset += pbuf_get_at(query, offset) + 1;	// The next label
+			}
+
+			// The name's end, then its type and class
+			if (offset + 5 <= length && pbuf_get_at(query, offset) == 0) {
+				questionEnd = offset + 5;
+				uint16_t type = dnsGet16(query, offset + 1);
+				uint16_t cls = dnsGet16(query, offset + 3);
+				answer = (type == DNS_TYPE_A || type == DNS_TYPE_ANY) && (cls == DNS_CLASS_IN || cls == DNS_CLASS_ANY);
+			} else {
+				rcode = DNS_FORMERR;
+			}
+		}
+
+		uint16_t copied = questionEnd > 0 ? questionEnd : 12;	// The header, and the question if there is one
+		struct pbuf *reply = pbuf_alloc(PBUF_TRANSPORT, copied + (answer ? 16 : 0), PBUF_RAM);
+		if (reply != NULL) {
+			uint8_t *data = (uint8_t *)reply->payload;
+			pbuf_copy_partial(query, data, copied, 0);
+			data[2] = 0x84 | (data[2] & 0x79);	// A reply, authoritative, with the query's opcode and recursion desired
+			data[3] = rcode;					// No recursion available
+			memset(data + 4, 0, 8);
+			data[5] = questionEnd > 0 ? 1 : 0;	// Questions
+			data[7] = answer ? 1 : 0;			// Answers
+
+			if (answer) {
+				const uint8_t record[] = {
+					0xC0, 12,				// The question's name
+					0, DNS_TYPE_A,
+					0, DNS_CLASS_IN,
+					0, 0, 0, DNS_TTL,
+					0, 4					// The address's length
+				};
+				memcpy(data + copied, record, sizeof(record));
+				memcpy(data + copied + sizeof(record), &netif_ip4_addr(ip_current_input_netif())->addr, 4);
+			}
+
+			udp_sendto(pcb, reply, addr, port);
+			pbuf_free(reply);
+		}
+
+		pbuf_free(query);
+	}
+
+	// For calls into lwIP, which have to be made on its thread
+	struct DNSCall {
+		struct tcpip_api_call_data call;
+		ip_addr_t address;
+		uint16_t port;
+		struct udp_pcb *pcb;
+	};
+
+	err_t dnsStartOnLwIP(struct tcpip_api_call_data *data) {
+		DNSCall *call = (DNSCall *)data;
+		call->pcb = udp_new_ip_type(IPADDR_TYPE_V4);
+		if (call->pcb == NULL) {
+			return ERR_MEM;
+		}
+
+		err_t err = udp_bind(call->pcb, &call->address, call->port);
+		if (err != ERR_OK) {
+			udp_remove(call->pcb);
+			call->pcb = NULL;
+			return err;
+		}
+
+		udp_recv(call->pcb, dnsReceive, NULL);
+		return ERR_OK;
+	}
+
+	err_t dnsStopOnLwIP(struct tcpip_api_call_data *data) {
+		udp_remove(((DNSCall *)data)->pcb);
+		return ERR_OK;
+	}
+}
+#endif
+
 void AsyncWiFiManager::dnsStart(bool start) {
 	//Make DNS control idempotent
 
 	if (start && !_dnsRunning) {
 		DEBUG_WM(F("Starting DNS server"));
 		_dnsRunning = true;
+		DEBUG_WM(toStringIp(WiFi.softAPIP()));
+#ifdef WM_LWIP_DNS
+		// On the access point's address, so it doesn't answer queries from the network the station is on
+		IPAddress ip = WiFi.softAPIP();
+		DNSCall call;
+		IP_ADDR4(&call.address, ip[0], ip[1], ip[2], ip[3]);
+		call.port = DNS_PORT;
+		call.pcb = NULL;
+		tcpip_api_call(dnsStartOnLwIP, &call.call);
+		_dnsPcb = call.pcb;
+		if (_dnsPcb == NULL) {
+			DEBUG_WM(F("DNS server did not start"));
+		}
+#else
 		/* Setup the DNS server redirecting all the domains to the apIP */
 #ifdef USE_EADNS
 		dnsServer->setErrorReplyCode(AsyncDNSReplyCode::NoError);
@@ -153,16 +288,25 @@ void AsyncWiFiManager::dnsStart(bool start) {
 #endif
 
 		dnsServer->setTTL(5);
-		DEBUG_WM(toStringIp(WiFi.softAPIP()));
 		if (!dnsServer->start(DNS_PORT, "*", WiFi.softAPIP())) {
 			DEBUG_WM(F("DNS server did not start"));
 		}
+#endif
 	}
 
 	if (!start && _dnsRunning) {
 		DEBUG_WM(F("Stopping DNS server"));
 		_dnsRunning = false;
+#ifdef WM_LWIP_DNS
+		if (_dnsPcb != NULL) {
+			DNSCall call;
+			call.pcb = _dnsPcb;
+			tcpip_api_call(dnsStopOnLwIP, &call.call);
+			_dnsPcb = NULL;
+		}
+#else
 		dnsServer->stop();
+#endif
 	}
 }
 
@@ -392,7 +536,7 @@ void AsyncWiFiManager::loop() {
 
 	_lastLoopTime = now;
 
-#ifndef USE_EADNS
+#if !defined(USE_EADNS) && !defined(WM_LWIP_DNS)
 	if (isAP()) {
 		dnsServer->processNextRequest();
 	}

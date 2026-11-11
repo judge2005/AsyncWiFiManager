@@ -17,6 +17,12 @@
 #endif
 #include <memory>
 
+// On ESP32 the portal answers DNS queries itself rather than with DNSServer, see dnsStart()
+#if !defined(ESP8266) && !defined(USE_EADNS)
+#define WM_LWIP_DNS
+struct udp_pcb;
+#endif
+
 // fix crash on ESP32 (see https://github.com/alanswx/ESPAsyncWiFiManager/issues/44)
 #if defined(ESP8266)
 typedef int wifi_ssid_count_t;
@@ -105,6 +111,7 @@ public:
 #ifdef USE_EADNS
 	AsyncWiFiManager(AsyncWebServer * server, AsyncDNSServer *dns);
 #else
+	// dns isn't used on ESP32, which answers DNS queries itself. It's kept so existing sketches build.
 	AsyncWiFiManager(AsyncWebServer * server, DNSServer *dns);
 #endif
 	~AsyncWiFiManager() {}
@@ -181,6 +188,9 @@ private:
 	bool _scanFailed = false;		// The last scan failed, so the list is from an earlier one
 	uint8_t _lastDisconnectReason = 0;	// Why the last connection failed. 0 once one works.
 	bool _dnsRunning = false;		// Make calls to dns server idempotent
+#ifdef WM_LWIP_DNS
+	struct udp_pcb *_dnsPcb = NULL;	// The DNS server's socket, NULL when it isn't running
+#endif
 	String _router_ssid;
 	String _router_pass;
 	String _ap_ssid;
