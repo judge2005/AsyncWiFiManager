@@ -55,7 +55,7 @@ const char HTTP_FORM_START[] PROGMEM
 const char HTTP_FORM_PARAM[] PROGMEM
 		= "<br/><label for='{i}'>{p}</label><input id='{i}' name='{n}' maxlength={l} value='{v}' {c}>";
 const char HTTP_FORM_END[] PROGMEM
-		= "<br/><button type='submit'>save</button></form>";
+		= "<br/><button type='submit'>Save</button></form>";
 const char HTTP_SCAN_LINK[] PROGMEM
 		= "<br/><div class=\"c\"><a href=\"/wifi?static={s}&scan=1\"><button>Scan</button></a></div>";
 const char HTTP_SCAN_REFRESH[] PROGMEM
@@ -92,20 +92,6 @@ private:
 	friend class AsyncWiFiManager;
 };
 
-class WiFiResult {
-public:
-	bool duplicate;
-	String SSID;
-	uint8_t encryptionType;
-	int32_t RSSI;
-	uint8_t *BSSID;
-	int32_t channel;
-	bool isHidden;
-
-	WiFiResult() {
-	}
-};
-
 class AsyncWiFiManager {
 public:
 #ifdef USE_EADNS
@@ -114,7 +100,9 @@ public:
 	// dns isn't used on ESP32, which answers DNS queries itself. It's kept so existing sketches build.
 	AsyncWiFiManager(AsyncWebServer * server, DNSServer *dns);
 #endif
-	~AsyncWiFiManager() {}
+	~AsyncWiFiManager();
+	AsyncWiFiManager(const AsyncWiFiManager&) = delete;
+	AsyncWiFiManager& operator=(const AsyncWiFiManager&) = delete;
 
 	void loop();
 	bool start();
@@ -123,6 +111,7 @@ public:
 	void setHostname(const char* hostname);
 	void setDebugOutput(bool debug);
 	void setRemoveDuplicateAPs(bool flag);
+	// Text in flash, such as a string literal, is used where it is on an ESP32. Anything else is copied.
 	void setCustomOptionsHTML(const char* html);
 	void setCustomHeadHTML(const char* html);
 	void addParameter(AsyncWiFiManagerParameter *p);
@@ -155,6 +144,20 @@ public:
 	void dumpInfo();
 
 private:
+	class PortalHandler;
+
+	// What a page shows that could change while it's being sent. It's sent in parts, see _sendPage().
+	struct Page {
+		uint8_t kind;
+		bool useStatic;			// The Wi-Fi page's static address fields
+		bool scanFailed;
+		bool connected;			// The Info page's
+		uint8_t problem;
+		uint32_t ip;
+		char ssid[33];
+		std::shared_ptr<const char> networks;	// See _listNetworks()
+	};
+
 	bool _debug = false;
 
 	void _stopConfigPortal();
@@ -163,10 +166,9 @@ private:
 	wl_status_t _connectWiFi();
 	void _scanNetworks();
 	String _savedSSID();
-	bool _start();
+	bool _start(bool connect);
 	void _claim();
 	void _release();
-	void _cacheHeads();
 
 	AsyncWebServer *server;
 #ifdef USE_EADNS
@@ -182,6 +184,8 @@ private:
     unsigned long _lastLoopTime = 0;
 
     bool _connect = false;			// Config Portal requested connection
+	bool _restart = false;			// Reset asked for at _restartTime
+	unsigned long _restartTime = 0;
 	bool _isAP = false;				// True if AP is enabled
 	int _loop_ap_state = -1;
 	bool _loop_scan = false;
@@ -196,23 +200,11 @@ private:
 	String _ap_ssid;
 	String _ap_pass;
 
-	bool   _portalSet = false;		// Enforce single initialization of ConfigPortal
+	bool   _portalSet = false;		// True while the portal's pages are served
 
-	AsyncWebHandler* rootApHandler;
-	AsyncWebHandler* wifiApHandler;
-	AsyncWebHandler* wifiSaveApHandler;
-	AsyncWebHandler* iApHandler;
-	AsyncWebHandler* rApHandler;
-	AsyncWebHandler* fwLinkApHandler;
-	
-	bool   _refresh_info = true;	// Refresh the info HTML when true
-	String _customHeadHTML;
-	String _customOptionsHTML;
-	String _wifiSaveHead;
-	String _wifiHead;
-	String _rootHead;
-	String _infoHead;
-	String _resetHead;
+	AsyncWebHandler *_portalHandler = NULL;	// Added the first time the portal is set up, then kept
+	const char *_customHeadHTML = NULL;		// Either in flash or a copy, see keepText(). Read with the lock held.
+	const char *_customOptionsHTML = NULL;
 
 	IPAddress _ap_static_ip;
 	IPAddress _ap_static_gw;
@@ -223,7 +215,14 @@ private:
 	IPAddress _sta_static_dns1= (uint32_t)0x00000000;
 	IPAddress _sta_static_dns2= (uint32_t)0x00000000;
 
-	void sendInfo(AsyncResponseStream *response);
+	uint8_t _portalPage(AsyncWebServerRequest*);
+	void _handlePortal(AsyncWebServerRequest*);
+	void _sendPage(AsyncWebServerRequest*, const Page&);
+	void _printPage(Print&, const Page&);
+	void _printHead(Print&, const char *title, bool script);
+	void _printNetworks(Print&, const Page&);
+	void _printInfo(Print&, const Page&);
+	static const char *_problemText(uint8_t reason);
 
 	void handleRoot(AsyncWebServerRequest*);
 	void handleWifi(AsyncWebServerRequest*);
@@ -231,7 +230,6 @@ private:
 	void handleInfo(AsyncWebServerRequest*);
 	void handleReset(AsyncWebServerRequest*);
 	void handleNotFound(AsyncWebServerRequest*);
-	void handle204(AsyncWebServerRequest*);
 	bool captivePortal(AsyncWebServerRequest*);
 	void dnsStart(bool start);
 #ifdef ESP8266
@@ -245,21 +243,15 @@ private:
 	void onDisconnected(WiFiEvent_t event, WiFiEventInfo_t info);
 #endif
 
-	// DNS server
-	const byte DNS_PORT = 53;
-
-	// Scanned WiFi access point SSIDs
-	WiFiResult *wifiSSIDs = 0;
-	wifi_ssid_count_t wifiSSIDCount = 0;
+	// The last scan's networks, see _listNetworks()
+	std::shared_ptr<const char> _networks;
 	bool _removeDuplicateAPs = true;
 	int  _minimumQuality     = -1;
-	bool shouldscan          = false;
 
-	void          sendNetworkList(AsyncResponseStream *response);
 	static int    getRSSIasQuality(int RSSI);
-	static bool   isIp(String str);
-	static String toStringIp(IPAddress ip);
-	void          copySSIDInfo(wifi_ssid_count_t n);
+	static bool   isIp(const String &str);
+	void          _saveScan(wifi_ssid_count_t n);
+	std::shared_ptr<const char> _listNetworks(wifi_ssid_count_t n);
 
 	void (*_apcallback)(AsyncWiFiManager*) = NULL;	// Call when AP mode state changes
 
@@ -273,15 +265,15 @@ private:
 	WiFiEventHandler stationConnectedHandler;
 	WiFiEventHandler stationDisconnectedHandler;
 #else
-	WiFiEventId_t stationGotIPHandler;
-	WiFiEventId_t stationConnectedHandler;
-	WiFiEventId_t stationDisconnectedHandler;
+	WiFiEventId_t stationGotIPHandler = 0;	// 0 is none
+	WiFiEventId_t stationConnectedHandler = 0;
+	WiFiEventId_t stationDisconnectedHandler = 0;
 #endif
 
 	int _paramsCount = 0;
-	AsyncWiFiManagerParameter *_params[WIFI_MANAGER_MAX_PARAMS];
+	AsyncWiFiManagerParameter *_params[WIFI_MANAGER_MAX_PARAMS] = {};
 
-	template<typename Generic> void DEBUG_WM(Generic text);
+	template<typename Generic> void _debugPrint(Generic text);
 
 	template<class T>
 	auto optionalIPFromString(T *obj, const char *s) ->
@@ -289,8 +281,9 @@ private:
 		return obj->fromString(s);
 	}
 	auto optionalIPFromString(...) -> bool {
-		DEBUG_WM(
-				"NO fromString METHOD ON IPAddress, you need ESP8266 core 2.1.0 or newer for Custom IP configuration to work.");
+		if (_debug) {
+			_debugPrint("NO fromString METHOD ON IPAddress, you need ESP8266 core 2.1.0 or newer for Custom IP configuration to work.");
+		}
 		return false;
 	}
 };
