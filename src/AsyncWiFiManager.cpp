@@ -244,6 +244,10 @@ void AsyncWiFiManagerParameter::init(const char *id, const char *placeholder, co
 	_customHTML = custom;
 }
 
+AsyncWiFiManagerParameter::~AsyncWiFiManagerParameter() {
+	delete[] _value;
+}
+
 const char* AsyncWiFiManagerParameter::getValue() {
 	return _value;
 }
@@ -585,6 +589,9 @@ bool AsyncWiFiManager::start() {
 	stationConnectedHandler = WiFi.onStationModeConnected(std::bind(&AsyncWiFiManager::onConnected, this, std::placeholders::_1));
 	stationDisconnectedHandler = WiFi.onStationModeDisconnected(std::bind(&AsyncWiFiManager::onDisconnected, this, std::placeholders::_1));
 #else
+	// Remove the handlers an earlier call added. On the ESP8266, replacing a handler removes it.
+	WiFi.removeEvent(stationConnectedHandler);
+	WiFi.removeEvent(stationDisconnectedHandler);
 #if ESP_ARDUINO_VERSION_MAJOR >= 2
 	stationConnectedHandler = WiFi.onEvent(std::bind(&AsyncWiFiManager::onConnected, this, std::placeholders::_1, std::placeholders::_2), ARDUINO_EVENT_WIFI_STA_CONNECTED);
 	stationDisconnectedHandler = WiFi.onEvent(std::bind(&AsyncWiFiManager::onDisconnected, this, std::placeholders::_1, std::placeholders::_2), ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
@@ -1548,6 +1555,7 @@ void AsyncWiFiManager::setConnectedCallback(void (*func)(void)) {
 #ifdef ESP8266
 	stationGotIPHandler = WiFi.onStationModeGotIP(std::bind(&AsyncWiFiManager::onStationIP, this, std::placeholders::_1));
 #else
+	WiFi.removeEvent(stationGotIPHandler);	// The one an earlier call added
 #if ESP_ARDUINO_VERSION_MAJOR >= 2
 	stationGotIPHandler = WiFi.onEvent(std::bind(&AsyncWiFiManager::onStationIP, this, std::placeholders::_1, std::placeholders::_2), ARDUINO_EVENT_WIFI_STA_GOT_IP);
 #else
