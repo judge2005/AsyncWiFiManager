@@ -193,8 +193,10 @@ public:
 	bool canHandle(AsyncWebServerRequest *request) {
 		uint8_t page = _manager->_portalPage(request);
 #ifndef ASYNCWEBSERVER_VERSION_MAJOR
-		// Older servers drop the headers no handler asked for. The form's callback is given the request.
-		if (page == SAVED_PAGE) {
+		// Older servers drop the headers no handler asked for, and read freed memory as they do (in
+		// _removeNotInterestingHeaders()), so keep them all, as server->on()'s handlers do. The form's
+		// callback is given the request too.
+		if (page != NO_PAGE) {
 			request->addInterestingHeader("ANY");
 		}
 #endif
