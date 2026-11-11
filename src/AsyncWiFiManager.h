@@ -73,6 +73,10 @@ public:
 			const char *defaultValue, int length);
 	AsyncWiFiManagerParameter(const char *id, const char *placeholder,
 			const char *defaultValue, int length, const char *custom);
+	~AsyncWiFiManagerParameter();
+	// It owns its value, so it can't be copied
+	AsyncWiFiManagerParameter(const AsyncWiFiManagerParameter&) = delete;
+	AsyncWiFiManagerParameter& operator=(const AsyncWiFiManagerParameter&) = delete;
 
 	const char* getID();
 	const char* getValue();
