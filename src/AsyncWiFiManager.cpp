@@ -274,12 +274,24 @@ AsyncWiFiManager::AsyncWiFiManager(AsyncWebServer *server, DNSServer *dns) : ser
 }
 #endif
 
+// Undoes everything that would otherwise call the deleted manager, or keep what it set up
 AsyncWiFiManager::~AsyncWiFiManager() {
+#ifndef ESP8266
+	// An ID of 0 is none. On the ESP8266, the handlers go as their members are destroyed.
+	WiFi.removeEvent(stationConnectedHandler);
+	WiFi.removeEvent(stationDisconnectedHandler);
+	WiFi.removeEvent(stationGotIPHandler);
+#endif
+	dnsStart(false);
 	if (_portalHandler != NULL) {
+		server->onNotFound(nullptr);
 		server->removeHandler(_portalHandler);
 	}
 	forgetText(_customHeadHTML);
 	forgetText(_customOptionsHTML);
+#ifdef ESP32
+	vSemaphoreDelete(loopMutex);
+#endif
 }
 
 void AsyncWiFiManager::setHostname(const char* hostname) {

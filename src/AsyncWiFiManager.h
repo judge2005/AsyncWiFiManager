@@ -265,9 +265,9 @@ private:
 	WiFiEventHandler stationConnectedHandler;
 	WiFiEventHandler stationDisconnectedHandler;
 #else
-	WiFiEventId_t stationGotIPHandler;
-	WiFiEventId_t stationConnectedHandler;
-	WiFiEventId_t stationDisconnectedHandler;
+	WiFiEventId_t stationGotIPHandler = 0;	// 0 is none
+	WiFiEventId_t stationConnectedHandler = 0;
+	WiFiEventId_t stationDisconnectedHandler = 0;
 #endif
 
 	int _paramsCount = 0;
